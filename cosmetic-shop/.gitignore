@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+release/
+*.tsbuildinfo
+
+# Environment & secrets 
+.env
+.env.*
+!.env.example
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Uploads (user-generated)
+apps/backend/uploads/*
+!apps/backend/uploads/.gitkeep
+
+# Prisma migrations (kept out of VCS by project choice)
+apps/backend/prisma/migrations/
+!apps/backend/prisma/migrations/.gitkeep
+
+# Logs
+*.log
+
+# Test coverage
+coverage/
+
+# OS & editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

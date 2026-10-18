@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id             Int       @id @default(autoincrement())
+  name           String
+  email          String    @unique
+  password       String
+  role           String    @default("ADMIN")
+  isActive       Boolean   @default(true)
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([email])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  type      String
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+model Brand {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+model Product {
+  id           Int           @id @default(autoincrement())
+  sku          String        @unique
+  barcode      String?       @unique
+  name         String
+  type         String
+  costPrice    Float
+  sellPrice    Float
+  stock        Int           @default(0)
+  lowStockAt   Int           @default(5)
+  expiryDate   DateTime?
+  imageUrl     String?
+  categoryId   Int
+  brandId      Int?
+  category     Category      @relation(fields: [categoryId], references: [id])
+  brand        Brand?        @relation(fields: [brandId], references: [id])
+  saleItems    SaleItem[]
+  stockAdjusts StockAdjust[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([name])
+  @@index([barcode])
+  @@index([type])
+}
+
+model Sale {
+  id            Int        @id @default(autoincrement())
+  invoiceNo     String     @unique
+  subtotal      Float
+  discount      Float      @default(0)
+  total         Float
+  paymentMethod String
+  items         SaleItem[]
+  createdAt     DateTime   @default(now())
+}
+
+model SaleItem {
+  id         Int      @id @default(autoincrement())
+  saleId     Int
+  productId  Int?
+  manualName String?
+  quantity   Int
+  unitPrice  Float
+  unitCost   Float?
+  total      Float
+  sale       Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product    Product? @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model StockAdjust {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  delta     Int
+  reason    String
+  unitCost  Float?
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @default(now())
+  category    String
+  description String
+  amount      Float
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
