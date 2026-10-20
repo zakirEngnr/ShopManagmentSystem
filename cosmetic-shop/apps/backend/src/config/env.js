@@ -28,6 +28,14 @@ if (JWT_SECRET.length < 32) {
 if (JWT_SECRET.includes('CHANGE') || JWT_SECRET.includes('dev-secret')) {
   throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
 }
+const secretUpper = JWT_SECRET.toUpperCase();
+if (
+  secretUpper.includes('REPLACE_WITH') ||
+  secretUpper.includes('PLACEHOLDER') ||
+  secretUpper.includes('EXAMPLE')
+) {
+  throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
+}
 
 export const env = Object.freeze({
   NODE_ENV,
