@@ -26,9 +26,7 @@ release/
 apps/backend/uploads/*
 !apps/backend/uploads/.gitkeep
 
-# Prisma migrations (kept out of VCS by project choice)
-apps/backend/prisma/migrations/
-!apps/backend/prisma/migrations/.gitkeep
+# Prisma migrations are source code: commit them.
 
 # Logs
 *.log

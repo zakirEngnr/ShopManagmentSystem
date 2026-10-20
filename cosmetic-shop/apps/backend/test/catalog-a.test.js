@@ -1,29 +1,18 @@
 // Phase A: category + brand CRUD integration tests.
 // Safety: throwaway SQLite file under os.tmpdir() only. Schema is created
-// from prisma/migrations/.../migration.sql via Prisma $executeRawUnsafe —
+// from every prisma/migrations/*/migration.sql via test-support/tempDb.js —
 // no Prisma CLI, no --accept-data-loss, no writes to the real shop.db.
 // Env is set BEFORE any src/ module is imported.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
+import { createTempDb, assertTmpDbUrl } from '../test-support/tempDb.js';
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-a-'));
-const dbFile = path.join(tmpDir, 'test.db');
-
-function abortIfNotTmpDb(url) {
-  const resolved = path.resolve(url.replace(/^file:/, ''));
-  const tmp = path.resolve(os.tmpdir());
-  if (!resolved.startsWith(tmp + path.sep)) {
-    throw new Error('refusing to run: DATABASE_URL is not inside os.tmpdir()');
-  }
-}
-
-const dbUrl = `file:${dbFile}`;
-abortIfNotTmpDb(dbUrl);
-process.env.DATABASE_URL = dbUrl;
+const backendDir = path.resolve(import.meta.dirname, '..');
+const ctx = await createTempDb({ prefix: 'catalog-a-', backendDir });
+const { tmpDir, dbFile, dbUrl, realTmp } = ctx;
 process.env.JWT_SECRET = 'test-jwt-secret-that-is-long-enough-0123456789';
 process.env.NODE_ENV = 'test';
 
@@ -61,28 +50,21 @@ function req(method, urlPath, opts = {}) {
   });
 }
 
-async function initTmpDb() {
-  abortIfNotTmpDb(dbUrl);
-  const backendDir = path.resolve(import.meta.dirname, '..');
-  const sqlPath = path.join(backendDir, 'prisma', 'migrations', '20261018125524_init', 'migration.sql');
-  const sql = fs.readFileSync(sqlPath, 'utf8');
-  const stmts = sql
-    .split(/;\s*(?:\n|$)/)
-    .map((s) => s
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('--'))
-      .join('\n')
-      .trim())
-    .filter(Boolean);
-  assert.ok(stmts.length > 0, 'migration.sql must not be empty');
-  for (const s of stmts) {
-    assert.match(s, /^CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)/i, 'unexpected statement: ' + s.slice(0, 60));
+test('migrations are present and applied', async () => {
+  const entries = fs
+    .readdirSync(path.join(backendDir, 'prisma', 'migrations'), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  assert.ok(entries.length > 0, 'no migration folders found');
+  const tables = await prisma.$queryRawUnsafe(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+  );
+  const names = tables.map((t) => t.name);
+  for (const expected of ['User', 'Category', 'Brand', 'Product', 'Sale', 'SaleItem']) {
+    assert.ok(names.includes(expected), `missing table ${expected}`);
   }
-  for (const s of stmts) {
-    await prisma.$executeRawUnsafe(s + ';');
-  }
-}
+});
 
 let tagSeq = 0;
 function tag(prefix) {
@@ -91,17 +73,10 @@ function tag(prefix) {
 }
 
 before(async () => {
-  abortIfNotTmpDb(dbUrl);
-  process.env.DATABASE_URL = dbUrl;
+  assertTmpDbUrl(dbUrl, realTmp);
+  assert.equal(process.env.DATABASE_URL, dbUrl);
   const db = await import('../src/db/prisma.js');
   prisma = db.prisma;
-  try {
-    await initTmpDb();
-  } catch (err) {
-    try { await prisma.$disconnect(); } catch {}
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    throw err;
-  }
   const { createApp } = await import('../src/app.js');
   app = createApp();
   const { hashPassword } = await import('../src/utils/password.js');
@@ -119,11 +94,11 @@ after(async () => {
   if (prisma) {
     try {
       const url = process.env.DATABASE_URL;
-      if (url) abortIfNotTmpDb(url);
+      if (url) assertTmpDbUrl(url, realTmp);
       await prisma.$disconnect();
     } catch {}
   }
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  ctx.cleanup();
 });
 
 function assertSafeBody(res) {
@@ -347,8 +322,8 @@ test('brand race stays consistent', async () => {
 });
 
 test('database is isolated temp file', async () => {
-  abortIfNotTmpDb(process.env.DATABASE_URL);
+  assertTmpDbUrl(process.env.DATABASE_URL, realTmp);
   assert.ok(!path.resolve(dbFile).includes('shop.db'));
-  const realDb = path.resolve(import.meta.dirname, '..', 'shop.db');
+  const realDb = path.resolve(backendDir, 'shop.db');
   assert.notEqual(path.resolve(dbFile), realDb);
 });

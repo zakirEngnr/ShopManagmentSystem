@@ -2,28 +2,18 @@
 // auth, stock rules, guarded deletion, concurrency. Isolated tmp DB only.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
 import jwt from 'jsonwebtoken';
+import { pathToFileURL } from 'node:url';
+import { createTempDb, assertTmpDbUrl } from '../test-support/tempDb.js';
 
-const realTmp = fs.realpathSync(os.tmpdir());
-const tmpDir = fs.mkdtempSync(path.join(realTmp, 'catalog-b-'));
-const dbFile = path.join(tmpDir, 'test.db');
+const backendDir = path.resolve(import.meta.dirname, '..');
+const backendUrl = pathToFileURL(backendDir + path.sep).href;
+const ctx = await createTempDb({ prefix: 'catalog-b-', backendDir });
+const { tmpDir, dbFile, dbUrl, realTmp } = ctx;
 const SECRET = 'SECRET-VALUE-b4c2d8';
-const BACKEND = '/home/zakir/Desktop/ShopManagmentSystem/cosmetic-shop/apps/backend';
-
-function abortIfNotTmpDb(url) {
-  const resolved = path.resolve(String(url).replace(/^file:/, ''));
-  if (!resolved.startsWith(path.resolve(realTmp) + path.sep)) {
-    throw new Error('refusing: DATABASE_URL not in tmpdir');
-  }
-}
-
-const dbUrl = 'file:' + dbFile;
-abortIfNotTmpDb(dbUrl);
-process.env.DATABASE_URL = dbUrl;
 process.env.JWT_SECRET = 'test-jwt-secret-that-is-long-enough-0123456789';
 process.env.NODE_ENV = 'test';
 
@@ -91,44 +81,32 @@ function req(method, urlPath, opts) {
   return doReq(method, full, o.token, payload);
 }
 
-async function initTmpDb() {
-  abortIfNotTmpDb(dbUrl);
-  const sql = fs.readFileSync(path.join(BACKEND, 'prisma/migrations/20261018125524_init/migration.sql'), 'utf8');
-  const rawParts = sql.split(/;\s*(?:\n|$)/);
-  const stmts = [];
-  for (const part of rawParts) {
-    const lines = part.split('\n');
-    const kept = [];
-    for (const line of lines) {
-      const t = line.trim();
-      if (t && !t.startsWith('--')) kept.push(t);
-    }
-    const stmt = kept.join('\n').trim();
-    if (stmt) stmts.push(stmt);
-  }
-  assert.ok(stmts.length > 0);
-  for (const s of stmts) assert.match(s, /^CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)/i);
-  for (const s of stmts) await prisma.$executeRawUnsafe(s + ';');
-}
-
 before(async () => {
-  abortIfNotTmpDb(dbUrl);
-  process.env.DATABASE_URL = dbUrl;
-  const db = await import(BACKEND + '/src/db/prisma.js');
+  assertTmpDbUrl(dbUrl, realTmp);
+  const db = await import(backendUrl + 'src/db/prisma.js');
   prisma = db.prisma;
-  try {
-    await initTmpDb();
-  } catch (err) {
-    try { await prisma.$disconnect(); } catch (e) {}
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
-    throw err;
-  }
   assert.equal(process.env.DATABASE_URL, dbUrl);
-  const mod = await import(BACKEND + '/src/app.js');
+  const mod = await import(backendUrl + 'src/app.js');
   app = mod.createApp();
   catA = await prisma.category.create({ data: { name: tag('CatA'), type: 'COSMETIC' } });
   catB = await prisma.category.create({ data: { name: tag('CatB'), type: 'JEWELRY' } });
   brandA = await prisma.brand.create({ data: { name: tag('BrandA') } });
+});
+
+test('migrations are present and applied', async () => {
+  const entries = fs
+    .readdirSync(path.join(backendDir, 'prisma', 'migrations'), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  assert.ok(entries.length > 0, 'no migration folders found');
+  const tables = await prisma.$queryRawUnsafe(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+  );
+  const names = tables.map((t) => t.name);
+  for (const expected of ['User', 'Category', 'Brand', 'Product', 'Sale', 'SaleItem']) {
+    assert.ok(names.includes(expected), `missing table ${expected}`);
+  }
 });
 
 test('product CRUD happy path', async () => {
@@ -209,11 +187,11 @@ test('missing refs give 404', async () => {
 after(async () => {
   if (prisma) {
     try {
-      if (process.env.DATABASE_URL) abortIfNotTmpDb(process.env.DATABASE_URL);
+      if (process.env.DATABASE_URL) assertTmpDbUrl(process.env.DATABASE_URL, realTmp);
       await prisma.$disconnect();
     } catch (e) {}
   }
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  ctx.cleanup();
 });
 
 function assertSafe(res) {
@@ -400,7 +378,7 @@ test('category brand races stay consistent', async () => {
 });
 
 test('db is isolated temp file', async () => {
-  abortIfNotTmpDb(process.env.DATABASE_URL);
+  assertTmpDbUrl(process.env.DATABASE_URL, realTmp);
   assert.ok(path.resolve(dbFile).indexOf('shop.db') === -1);
 });
 
