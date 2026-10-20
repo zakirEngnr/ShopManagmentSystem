@@ -1,10 +1,15 @@
 // Shared temp-DB helper for backend integration tests.
 //
-// Safety contract (same as the per-file setup it replaces):
+// Safety contract:
 // - throwaway SQLite file under fs.realpathSync(os.tmpdir()) only
 // - DATABASE_URL is set to the temp file and asserted equal after import
 // - every prisma/migrations/* folder is applied in sorted order
-// - only CREATE TABLE / CREATE INDEX statements are executed
+// - only allow-listed migration statements are executed:
+//   CREATE TABLE / CREATE (UNIQUE) INDEX (initial schema),
+//   ALTER TABLE ... ADD COLUMN (additive column migrations),
+//   PRAGMA ... (migration pragmas such as legacy_redundant_index /
+//   foreign_keys toggles emitted by Prisma table rebuilds);
+//   anything else (DROP, DELETE, UPDATE, INSERT, ...) aborts
 // - cleanup removes the temp dir even on failure
 // Env is set BEFORE any src/ module is imported by the caller.
 import assert from 'node:assert/strict';
@@ -33,10 +38,18 @@ function splitStatements(sql) {
     .filter(Boolean);
 }
 
+function isAllowedMigrationStatement(s) {
+  return (
+    /^CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)/i.test(s) ||
+    /^ALTER\s+TABLE\s+"?[A-Za-z0-9_]+"?\s+ADD\s+COLUMN\s/i.test(s) ||
+    /^PRAGMA\s/i.test(s)
+  );
+}
+
 /**
  * Create a temp dir + temp SQLite file, point DATABASE_URL at it, and apply
  * every migration folder (sorted) via $executeRawUnsafe after asserting each
- * statement is a CREATE TABLE / CREATE INDEX.
+ * statement is allow-listed (see isAllowedMigrationStatement).
  * Returns { tmpDir, dbFile, dbUrl, realTmp, cleanup }.
  */
 export async function createTempDb({ prefix, backendDir }) {
@@ -74,7 +87,7 @@ export async function createTempDb({ prefix, backendDir }) {
       const stmts = splitStatements(sql);
       assert.ok(stmts.length > 0, `migration.sql must not be empty: ${folder}`);
       for (const s of stmts) {
-        assert.match(s, /^CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)/i, 'unexpected statement: ' + s.slice(0, 60));
+        assert.ok(isAllowedMigrationStatement(s), 'unexpected statement: ' + s.slice(0, 60));
       }
       for (const s of stmts) {
         await prisma.$executeRawUnsafe(s + ';');

@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
-import jwt from 'jsonwebtoken';
 import { pathToFileURL } from 'node:url';
 import { createTempDb, assertTmpDbUrl } from '../test-support/tempDb.js';
+import { createUser, signToken } from '../test-support/auth.js';
 
 const backendDir = path.resolve(import.meta.dirname, '..');
 const backendUrl = pathToFileURL(backendDir + path.sep).href;
@@ -23,7 +23,7 @@ let catA;
 let catB;
 let brandA;
 let tagSeq = 0;
-const token = jwt.sign({ userId: 1, role: 'ADMIN' }, process.env.JWT_SECRET, { algorithm: 'HS256' });
+let token;
 
 function tag(p) {
   tagSeq += 1;
@@ -88,6 +88,8 @@ before(async () => {
   assert.equal(process.env.DATABASE_URL, dbUrl);
   const mod = await import(backendUrl + 'src/app.js');
   app = mod.createApp();
+  const admin = await createUser(prisma, { role: 'ADMIN', tag: 'products-admin' });
+  token = signToken(admin);
   catA = await prisma.category.create({ data: { name: tag('CatA'), type: 'COSMETIC' } });
   catB = await prisma.category.create({ data: { name: tag('CatB'), type: 'JEWELRY' } });
   brandA = await prisma.brand.create({ data: { name: tag('BrandA') } });
@@ -339,7 +341,7 @@ test('concurrency races stay consistent', async () => {
 
 test('category brand races stay consistent', async () => {
   const tallies = { delWins: 0, refWins: 0 };
-  const adminTok = jwt.sign({ userId: 1, role: 'ADMIN' }, process.env.JWT_SECRET, { algorithm: 'HS256' });
+  const adminTok = token;
   for (let i = 0; i < 25; i++) {
     const cat = await prisma.category.create({ data: { name: tag('RCat'), type: 'COSMETIC' } });
     const sku = tag('RCSKU');

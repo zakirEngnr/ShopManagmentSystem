@@ -140,7 +140,7 @@ export async function login(email, password) {
     updated = await prisma.user.update({
       where: { id: user.id, ...notLocked(new Date()) },
       data: { failedAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
-      select: PUBLIC_FIELDS,
+      select: { ...PUBLIC_FIELDS, tokenVersion: true },
     });
   } catch (err) {
     if (err && err.code === 'P2025') {
@@ -156,12 +156,19 @@ export async function login(email, password) {
   }
 
   const token = jwt.sign(
-    { userId: updated.id, role: updated.role },
+    { userId: updated.id, role: updated.role, tokenVersion: updated.tokenVersion },
     env.JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256' },
   );
 
   return { token, user: toPublicUser(updated) };
+}
+
+export async function revokeUserTokens(userId) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { tokenVersion: { increment: 1 } },
+  });
 }
 
 export async function getUserById(id) {
@@ -178,4 +185,4 @@ export async function getUserById(id) {
   return toPublicUser(user);
 }
 
-export default { login, getUserById };
+export default { login, getUserById, revokeUserTokens };
