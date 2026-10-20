@@ -246,10 +246,22 @@ test('upgrade: init-only user gets tokenVersion 0 after new migration', async ()
       )
       .filter(Boolean);
   const initSql = fs.readFileSync(path.join(migrationsDir, folders[0], 'migration.sql'), 'utf8');
-  await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "User";');
-  for (const s of split(initSql)) {
-    if (s.startsWith('CREATE TABLE "User"')) await prisma.$executeRawUnsafe(s + ';');
-  }
+  // Recreate the User table exactly as init defines it, including its email
+  // indexes — otherwise a later test in this file would silently lose the
+  // unique-email constraint in the shared temp DB.
+  const recreateUserTable = async () => {
+    await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "User";');
+    for (const s of split(initSql)) {
+      if (
+        s.startsWith('CREATE TABLE "User"') ||
+        s.startsWith('CREATE UNIQUE INDEX "User_email_key"') ||
+        s.startsWith('CREATE INDEX "User_email_idx"')
+      ) {
+        await prisma.$executeRawUnsafe(s + ';');
+      }
+    }
+  };
+  await recreateUserTable();
   await prisma.$executeRawUnsafe(
     `INSERT INTO "User" (name, email, password, role, isActive, failedAttempts, updatedAt) VALUES ('Up','upgrade-tok@shop.local','h','ADMIN',1,0,CURRENT_TIMESTAMP);`,
   );
@@ -266,10 +278,7 @@ test('upgrade: init-only user gets tokenVersion 0 after new migration', async ()
   );
   assert.equal(rows.length, 1);
   assert.equal(rows[0].tokenVersion, 0);
-  await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "User";');
-  for (const s of split(initSql)) {
-    if (s.startsWith('CREATE TABLE "User"')) await prisma.$executeRawUnsafe(s + ';');
-  }
+  await recreateUserTable();
   for (const s of split(migSql)) {
     await prisma.$executeRawUnsafe(s + ';');
   }
