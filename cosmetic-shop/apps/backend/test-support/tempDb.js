@@ -8,8 +8,12 @@
 //   CREATE TABLE / CREATE (UNIQUE) INDEX (initial schema),
 //   ALTER TABLE ... ADD COLUMN (additive column migrations),
 //   PRAGMA ... (migration pragmas such as legacy_redundant_index /
-//   foreign_keys toggles emitted by Prisma table rebuilds);
-//   anything else (DROP, DELETE, UPDATE, INSERT, ...) aborts
+//   foreign_keys toggles emitted by Prisma table rebuilds),
+//   the canonical Prisma SQLite table-rebuild shape only
+//   (CREATE TABLE "new_X" / INSERT INTO "new_X" ... SELECT ...
+//   / DROP TABLE "X" / ALTER TABLE "new_X" RENAME TO "X"),
+//   anything else (DELETE, UPDATE, DROP of arbitrary tables, ...)
+//   aborts
 // - cleanup removes the temp dir even on failure
 // Env is set BEFORE any src/ module is imported by the caller.
 import assert from 'node:assert/strict';
@@ -42,7 +46,20 @@ function isAllowedMigrationStatement(s) {
   return (
     /^CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)/i.test(s) ||
     /^ALTER\s+TABLE\s+"?[A-Za-z0-9_]+"?\s+ADD\s+COLUMN\s/i.test(s) ||
-    /^PRAGMA\s/i.test(s)
+    /^PRAGMA\s/i.test(s) ||
+    isTableRebuildStatement(s)
+  );
+}
+
+// Canonical Prisma SQLite "RedefineTables" rebuild, restricted to a temp
+// "new_<Table>" table: create it, copy rows with INSERT ... SELECT, drop the
+// old table, then rename the new one back. Rejects any other DROP/INSERT.
+function isTableRebuildStatement(s) {
+  return (
+    /^CREATE\s+TABLE\s+"new_[A-Za-z0-9_]+"/i.test(s) ||
+    (/^INSERT\s+INTO\s+"new_[A-Za-z0-9_]+"\s*\(/i.test(s) && /\bSELECT\b/i.test(s)) ||
+    /^DROP\s+TABLE\s+"(?!new_)[A-Za-z0-9_]+"$/i.test(s) ||
+    /^ALTER\s+TABLE\s+"new_[A-Za-z0-9_]+"\s+RENAME\s+TO\s+"[A-Za-z0-9_]+"$/i.test(s)
   );
 }
 

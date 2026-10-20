@@ -58,7 +58,7 @@ model Product {
   categoryId   Int
   brandId      Int?
   category     Category      @relation(fields: [categoryId], references: [id])
-  brand        Brand?        @relation(fields: [brandId], references: [id])
+  brand        Brand?        @relation(fields: [brandId], references: [id], onDelete: Restrict)
   saleItems    SaleItem[]
   stockAdjusts StockAdjust[]
   createdAt    DateTime      @default(now())

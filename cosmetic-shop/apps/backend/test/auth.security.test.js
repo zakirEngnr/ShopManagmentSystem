@@ -253,8 +253,11 @@ test('upgrade: init-only user gets tokenVersion 0 after new migration', async ()
   await prisma.$executeRawUnsafe(
     `INSERT INTO "User" (name, email, password, role, isActive, failedAttempts, updatedAt) VALUES ('Up','upgrade-tok@shop.local','h','ADMIN',1,0,CURRENT_TIMESTAMP);`,
   );
-  const lastFolder = folders[folders.length - 1];
-  const migSql = fs.readFileSync(path.join(migrationsDir, lastFolder, 'migration.sql'), 'utf8');
+  // Select the tokenVersion migration by name (not "last folder"): later
+  // migrations (e.g. brand_fk_restrict) may exist after it.
+  const tvFolder = folders.find((f) => f.endsWith('_add_user_token_version'));
+  assert.ok(tvFolder, 'tokenVersion migration folder not found');
+  const migSql = fs.readFileSync(path.join(migrationsDir, tvFolder, 'migration.sql'), 'utf8');
   for (const s of split(migSql)) {
     await prisma.$executeRawUnsafe(s + ';');
   }

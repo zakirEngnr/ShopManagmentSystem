@@ -3,9 +3,10 @@ import { mapPrismaError, httpError } from '../utils/prismaErrors.js';
 
 /**
  * Brand service — same conventions as the category service.
- * Note: Product.brandId is ON DELETE SET NULL, but the spec requires a
- * guarded 409 when a brand is referenced, so deletes check references
- * first and treat a concurrent reference as a conflict.
+ * Product.brandId is ON DELETE RESTRICT, so a referenced brand delete fails
+ * at the database (P2003 -> 409 'Brand is referenced by other records').
+ * A concurrent product create either commits first (delete -> 409) or
+ * fails first (delete -> 200): the FK is the single source of truth.
  */
 
 export async function listBrands() {
@@ -37,17 +38,9 @@ export async function updateBrand(id, data) {
 export async function deleteBrand(id) {
   const existing = await prisma.brand.findUnique({ where: { id } });
   if (!existing) throw httpError(404, 'Brand not found');
-  // Guarded deletion: refuse while products reference this brand. A brand
-  // product created concurrently after the check maps to 409 as well —
-  // either the delete wins consistently or the reference wins with 409.
-  const refCount = await prisma.product.count({ where: { brandId: id } });
-  if (refCount > 0) throw httpError(409, 'Brand is referenced by other records');
   try {
-    const stillReferenced = await prisma.product.count({ where: { brandId: id } });
-    if (stillReferenced > 0) throw httpError(409, 'Brand is referenced by other records');
     return await prisma.brand.delete({ where: { id } });
   } catch (err) {
-    if (err && err.status === 409) throw err;
     mapPrismaError(err, { entity: 'Brand' });
   }
 }
