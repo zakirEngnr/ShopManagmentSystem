@@ -32,46 +32,51 @@ export default function POS() {
   const [barcodeError, setBarcodeError] = useState(null);
 
   const debounceTimer = useRef(null);
-  const requestId = useRef(0);
+  const productRequestId = useRef(0);
+  const barcodeRequestId = useRef(0);
   const mounted = useRef(true);
 
-  const fetchProductList = useCallback(async () => {
-    const currentRequestId = ++requestId.current;
+  const fetchProductList = useCallback(async (nextSearch = '', nextType = '') => {
+    const currentRequestId = ++productRequestId.current;
+
+    setListLoading(true);
+    setListError(null);
 
     try {
       const data = await fetchProducts({
-        search: searchQuery || undefined,
-        type: productType || undefined,
+        search: nextSearch || undefined,
+        type: nextType || undefined,
         limit: 50,
       });
 
-      if (!mounted.current || currentRequestId !== requestId.current) {
+      if (!mounted.current || currentRequestId !== productRequestId.current) {
         return;
       }
 
-      setProducts(data.products ?? []);
+      setProducts(Array.isArray(data?.products) ? data.products : []);
       setListError(null);
     } catch {
-      if (!mounted.current || currentRequestId !== requestId.current) {
+      if (!mounted.current || currentRequestId !== productRequestId.current) {
         return;
       }
 
-      setListError('Unable to load products. Please try again.');
       setProducts([]);
+      setListError('Unable to load products. Please try again.');
     } finally {
-      if (mounted.current && currentRequestId === requestId.current) {
+      if (mounted.current && currentRequestId === productRequestId.current) {
         setListLoading(false);
       }
     }
-  }, [searchQuery, productType]);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
-    setListLoading(true);
-    setListError(null);
-    fetchProductList();
+    void fetchProductList('', '');
+
     return () => {
       mounted.current = false;
+      productRequestId.current += 1;
+      barcodeRequestId.current += 1;
       if (debounceTimer.current) {
         clearTimeout(debounceTimer.current);
         debounceTimer.current = null;
@@ -82,25 +87,26 @@ export default function POS() {
   const handleSearchChange = (event) => {
     const value = event.target.value;
     setSearchQuery(value);
+    productRequestId.current += 1;
 
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current);
     }
 
     debounceTimer.current = setTimeout(() => {
-      setListLoading(true);
-      setListError(null);
-      requestId.current = ++requestId.current;
-      fetchProductList();
+      void fetchProductList(value, productType);
     }, DEBOUNCE_MS);
   };
 
-  const handleTypeChange = (event) => {
-    setProductType(event.target.value);
-    setListLoading(true);
-    setListError(null);
-    requestId.current = ++requestId.current;
-    fetchProductList();
+  const handleTypeChange = (nextType) => {
+    setProductType(nextType);
+    productRequestId.current += 1;
+
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    void fetchProductList(searchQuery, nextType);
   };
 
   const handleBarcodeLookup = async (event) => {
@@ -111,6 +117,8 @@ export default function POS() {
     const barcode = barcodeValue.trim();
     if (!barcode) return;
 
+    const currentRequestId = ++barcodeRequestId.current;
+
     setBarcodeLoading(true);
     setBarcodeError(null);
     setBarcodeResult(null);
@@ -119,7 +127,9 @@ export default function POS() {
     try {
       const product = await fetchProductByBarcode(barcode);
 
-      if (!mounted.current) return;
+      if (!mounted.current || currentRequestId !== barcodeRequestId.current) {
+        return;
+      }
 
       if (product === null) {
         setBarcodeNotFound(true);
@@ -129,22 +139,27 @@ export default function POS() {
         setBarcodeNotFound(false);
       }
     } catch {
-      if (!mounted.current) return;
+      if (!mounted.current || currentRequestId !== barcodeRequestId.current) {
+        return;
+      }
 
       setBarcodeError('Unable to look up barcode. Please try again.');
       setBarcodeResult(null);
       setBarcodeNotFound(false);
     } finally {
-      if (mounted.current) {
+      if (mounted.current && currentRequestId === barcodeRequestId.current) {
         setBarcodeLoading(false);
       }
     }
   };
 
   const handleRetry = () => {
-    setListError(null);
-    requestId.current = ++requestId.current;
-    fetchProductList();
+    productRequestId.current += 1;
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+    void fetchProductList(searchQuery, productType);
   };
 
   const renderProductCard = (product) => {
@@ -327,7 +342,9 @@ export default function POS() {
           {PRODUCT_TYPE_FILTERS.map((filter) => (
             <button
               key={filter.value}
-              onClick={handleTypeChange}
+              type="button"
+              value={filter.value}
+              onClick={() => handleTypeChange(filter.value)}
               className={`px-3 py-1.5 text-sm rounded-lg border transition ${
                 productType === filter.value
                   ? 'bg-indigo-600 border-indigo-600 text-white'
@@ -370,8 +387,12 @@ export default function POS() {
                 onClick={() => {
                   setSearchQuery('');
                   setProductType('');
-                  requestId.current = ++requestId.current;
-                  fetchProductList();
+                  productRequestId.current += 1;
+                  if (debounceTimer.current) {
+                    clearTimeout(debounceTimer.current);
+                    debounceTimer.current = null;
+                  }
+                  void fetchProductList('', '');
                 }}
                 className="mt-2 text-sm font-medium text-indigo-600 hover:underline"
               >
