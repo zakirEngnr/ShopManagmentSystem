@@ -320,6 +320,45 @@ test('T5 top products', async () => {
   assert.equal(products[1].revenue, 50);
 });
 
+test('T5b top products tie-break is deterministic at the limit boundary', async () => {
+  const productA = await createProduct({ name: 'Tie A', sku: 'RP-TIE-A' });
+  const productB = await createProduct({ name: 'Tie B', sku: 'RP-TIE-B' });
+  const productC = await createProduct({ name: 'Tie C', sku: 'RP-TIE-C' });
+  const productD = await createProduct({ name: 'Tie D', sku: 'RP-TIE-D' });
+  const productE = await createProduct({ name: 'Tie E', sku: 'RP-TIE-E' });
+  const when = utc(2026, 2, 10, 9, 0, 0);
+
+  const saleIds = ['INV-TIE-1', 'INV-TIE-2', 'INV-TIE-3', 'INV-TIE-4', 'INV-TIE-5'];
+  for (let i = 0; i < saleIds.length; i += 1) {
+    const product = [productA, productB, productC, productD, productE][i];
+    await createSaleDirect({
+      invoiceNo: saleIds[i],
+      createdAt: when,
+      subtotal: 50,
+      discount: 0,
+      items: [{ productId: product.id, quantity: 5, unitPrice: 10, unitCost: 4 }],
+    });
+  }
+
+  const expected = [productA.id, productB.id];
+  for (let i = 0; i < 5; i += 1) {
+    const res = await req('GET', `${REPORTS}/top-products`, {
+      token: adminToken,
+      query: { from: '2026-02-10', to: '2026-02-10', limit: '2' },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      res.body.products.map((p) => p.productId),
+      expected,
+      'tied quantities must be ordered by productId at the take boundary',
+    );
+    assert.deepEqual(
+      res.body.products.map((p) => p.quantitySold),
+      [5, 5],
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
 // T6. Low stock
 // ---------------------------------------------------------------------------

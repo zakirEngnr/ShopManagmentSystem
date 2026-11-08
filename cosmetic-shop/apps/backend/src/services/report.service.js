@@ -192,15 +192,12 @@ export async function getTopProducts(fromDate, toDate, limit = 5) {
       sale: { createdAt: { gte, lte } },
     },
     _sum: { quantity: true, total: true },
-    orderBy: { _sum: { quantity: 'desc' } },
+    orderBy: [
+      { _sum: { quantity: 'desc' } },
+      { productId: 'asc' },
+    ],
     take: parsedLimit,
   });
-
-  groups.sort(
-    (a, b) =>
-      Number(b._sum.quantity) - Number(a._sum.quantity) ||
-      Number(a.productId) - Number(b.productId),
-  );
 
   const ids = groups.map((g) => Number(g.productId));
   let nameById = new Map();
