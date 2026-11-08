@@ -34,3 +34,17 @@ Warnings:
   authenticated requests fail (the `tokenVersion` column is missing).
 * `prisma:migrate` (`migrate dev --name init`) must never be used on the
   real database — it is a development command. Use `prisma:deploy` only.
+
+## Uploaded images
+
+Product images are stored as files in `UPLOAD_DIR` (default
+`apps/backend/uploads`), which is ignored by git. Image files are NOT part of
+`shop.db` and are NOT included in a shop.db backup: back up `shop.db` and the
+`uploads` folder together. Restoring only `shop.db` leaves product images
+missing (product `imageUrl` values will point to absent files).
+
+`UPLOAD_DIR` must be a dedicated folder. The server refuses to start if it
+contains anything except image files (`<uuid>.jpg|png|webp`), their `.tmp`
+uploads, or tolerated OS files (`.gitkeep`, `.DS_Store`, `Thumbs.db`,
+`desktop.ini`) — for example it refuses a directory containing `shop.db`,
+`.env`, or `*.sqlite` files.

@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { mapPrismaError, httpError } from '../utils/prismaErrors.js';
+import { saveImage, deleteImageFileSilent, imageUrlToFilename } from './upload.service.js';
 
 /**
  * Product service — Prisma wrapper following category/brand conventions.
@@ -92,6 +93,7 @@ export async function deleteProduct(id) {
   // Guarded delete: pre-checks give clean 404/409, and any reference created
   // concurrently (sale item or stock adjust, both RESTRICT) fails the delete
   // with P2003 -> 409. Nothing is cascaded — sales/stock history stay.
+  // A 404 or 409 leaves the image file alone.
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) throw httpError(404, 'Product not found');
   const refs = await Promise.all([
@@ -99,14 +101,88 @@ export async function deleteProduct(id) {
     prisma.stockAdjust.count({ where: { productId: id } }),
   ]);
   if (refs[0] > 0 || refs[1] > 0) throw httpError(409, 'Product is referenced by other records');
+  const imageUrl = existing.imageUrl;
   try {
     await prisma.product.delete({ where: { id } });
-    return { deleted: true };
   } catch (err) {
     mapPrismaError(err, { entity: 'Product' });
   }
+  // The DB delete succeeded: remove the image file only now.
+  if (imageUrl) {
+    const name = imageUrlToFilename(imageUrl);
+    if (name) await deleteImageFileSilent(name);
+  }
+  return { deleted: true };
 }
 
-export default { listProducts, getProductById, createProduct, updateProduct, deleteProduct };
+// Serialize image replacement per product inside this process. Interactive
+// $transaction support is not relied upon: each product id gets a promise
+// chain so concurrent replacements for the same product never interleave.
+const replaceLocks = new Map();
+
+async function withReplaceLock(id, task) {
+  let previous = replaceLocks.get(id);
+  if (!previous) previous = Promise.resolve();
+  const next = previous.then(task).catch((err) => {
+    throw err;
+  });
+  replaceLocks.set(id, next);
+  try {
+    return await next;
+  } finally {
+    if (replaceLocks.get(id) === next) replaceLocks.delete(id);
+  }
+}
+
+/**
+ * Replace the product image. Writes the new file first, then atomically
+ * swaps imageUrl with updateMany CAS (compare-and-swap) retries; the old
+ * file is removed only after a successful swap. Any failure after the new
+ * file is written removes the new file and rethrows; the OLD image is
+ * untouched. Interactive $transaction is not used.
+ */
+export async function replaceProductImage(id, { buffer, ext }) {
+  return withReplaceLock(id, async () => {
+    // (1) the product must exist BEFORE any disk write.
+    const existing = await prisma.product.findUnique({ where: { id } });
+    if (!existing) throw httpError(404, 'Product not found');
+
+    // (2) save the new image to disk under a server-generated name.
+    const filename = saveImage(buffer, ext);
+    const newImageUrl = '/uploads/' + filename;
+
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Re-read the current imageUrl every attempt (CAS expected value).
+      const row = await prisma.product.findUnique({ where: { id } });
+      if (!row) {
+        await deleteImageFileSilent(filename);
+        throw httpError(404, 'Product not found');
+      }
+      try {
+        const result = await prisma.product.updateMany({
+          where: { id, imageUrl: row.imageUrl ?? null },
+          data: { imageUrl: newImageUrl },
+        });
+        if (result.count === 1) {
+          // (6) only after a successful swap, remove the old image file.
+          const oldName = row.imageUrl ? imageUrlToFilename(row.imageUrl) : null;
+          if (oldName) await deleteImageFileSilent(oldName);
+          return await prisma.product.findUnique({ where: { id } });
+        }
+        // count 0: concurrent modification, retry with fresh current value.
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    // (5) any failure after step 3: remove the new file, rethrow. OLD image
+    // untouched. Three CAS misses -> 409.
+    await deleteImageFileSilent(filename);
+    if (lastErr) throw lastErr;
+    throw httpError(409, 'Concurrent modification');
+  });
+}
+
+export default { listProducts, getProductById, createProduct, updateProduct, deleteProduct, replaceProductImage };
 
 

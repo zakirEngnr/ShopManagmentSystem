@@ -1,5 +1,7 @@
 import { parse, parseId } from '../middleware/validate.js';
 import { productCreateSchema, productUpdateSchema, productQuerySchema } from '../schemas/product.schema.js';
+import { validateImageBuffer } from '../middleware/upload.js';
+import { httpError } from '../utils/prismaErrors.js';
 import * as productService from '../services/product.service.js';
 
 export async function list(req, res, next) {
@@ -53,5 +55,23 @@ export async function remove(req, res, next) {
   }
 }
 
-export default { list, detail, create, update, remove };
+export async function uploadImage(req, res, next) {
+  try {
+    const id = parseId(req.params);
+    if (!req.file) throw httpError(400, 'No image file provided');
+    const validation = validateImageBuffer(req.file.buffer);
+    if (!validation.valid) {
+      throw httpError(400, 'Unsupported or invalid image (JPEG, PNG or WebP, max 2 MB)');
+    }
+    const product = await productService.replaceProductImage(id, {
+      buffer: req.file.buffer,
+      ext: validation.ext,
+    });
+    res.json({ ok: true, product });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export default { list, detail, create, update, remove, uploadImage };
 

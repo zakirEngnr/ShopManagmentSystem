@@ -77,6 +77,11 @@ export async function createTempDb({ prefix, backendDir }) {
   abortIfNotTmpDb(dbUrl, realTmp);
   process.env.DATABASE_URL = dbUrl;
 
+  // Isolated upload dir for this suite, cleaned up together with tmpDir.
+  const uploadDir = path.join(tmpDir, 'uploads');
+  fs.mkdirSync(uploadDir, { recursive: true, mode: 0o700 });
+  process.env.UPLOAD_DIR = uploadDir;
+
   const cleanup = () => {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -110,7 +115,7 @@ export async function createTempDb({ prefix, backendDir }) {
         await prisma.$executeRawUnsafe(s + ';');
       }
     }
-    return { tmpDir, dbFile, dbUrl, realTmp, cleanup };
+    return { tmpDir, dbFile, dbUrl, realTmp, cleanup, uploadDir };
   } catch (err) {
     cleanup();
     throw err;
