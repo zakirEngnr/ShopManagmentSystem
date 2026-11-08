@@ -12,8 +12,11 @@ const getToken = () => {
   }
 };
 
+const apiBase = (import.meta.env.VITE_API_URL || 'http://localhost:4000')
+  .replace(/\/+$/, '');
+
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000',
+  baseURL: `${apiBase}/api`,
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',

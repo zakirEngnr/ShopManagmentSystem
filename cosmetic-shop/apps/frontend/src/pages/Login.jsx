@@ -13,14 +13,16 @@ export default function Login({ isAuthenticated, onLogin }) {
 
   // Redirect already-authenticated users away from the login screen,
   // preserving the originally requested destination when available.
+  // Only same-origin relative paths are allowed to avoid open redirects.
+  const nextRaw = new URLSearchParams(location.search).get('next');
+  const isSafePath = (path) => path.startsWith('/') && !path.startsWith('//');
+  const next = isSafePath(nextRaw ?? '') ? nextRaw : '/';
+
   useEffect(() => {
     if (isAuthenticated) {
-      const next = new URLSearchParams(location.search).get('next') || '/';
       navigate(next, { replace: true });
     }
-  }, [isAuthenticated, navigate, location.search]);
-
-  const next = new URLSearchParams(location.search).get('next') || '/';
+  }, [isAuthenticated, navigate, next]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
