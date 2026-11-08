@@ -4,10 +4,11 @@ import categoryRoutes from './category.routes.js';
 import brandRoutes from './brand.routes.js';
 import productRoutes from './product.routes.js';
 import saleRoutes from './sale.routes.js';
+import stockRoutes from './stock.routes.js';
 
 const router = Router();
 
-router.get('/health', (req, res) => {
+router.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'cosmetic-shop-backend', time: new Date().toISOString() });
 });
 
@@ -16,5 +17,6 @@ router.use('/categories', categoryRoutes);
 router.use('/brands', brandRoutes);
 router.use('/products', productRoutes);
 router.use('/sales', saleRoutes);
+router.use('/stock', stockRoutes);
 
 export default router;
