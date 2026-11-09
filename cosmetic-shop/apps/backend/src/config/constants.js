@@ -6,6 +6,7 @@ export const PRODUCT_TYPES = Object.freeze({
 export const PAYMENT_METHODS = Object.freeze({
   CASH: 'CASH',
   CARD: 'CARD',
+  JAZZCASH: 'JAZZCASH',
   MOBILE: 'MOBILE',
 });
 
