@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Barcode, Package, AlertCircle, Loader2, Sparkles,
   ShoppingCart, Trash2, Plus, Minus, Save, CheckCircle,
-  DollarSign, Smartphone, Edit2, Check
+  DollarSign, Smartphone, Edit2, Check, User,
 } from 'lucide-react';
 import { fetchProducts, fetchProductByBarcode } from '../api/products';
 import { createSale } from '../api/sales';
+import { fetchCustomers } from '../api/customers';
 
 const PRODUCT_TYPE_FILTERS = [
   { value: '', label: 'All' },
@@ -17,6 +18,7 @@ const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash', icon: DollarSign },
   { value: 'JAZZCASH', label: 'JazzCash', icon: Smartphone },
   { value: 'MOBILE', label: 'Easypaisa', icon: Smartphone },
+  { value: 'KHATA', label: 'Khata (Credit)', icon: User },
 ];
 
 const DEBOUNCE_MS = 300;
@@ -27,6 +29,16 @@ const toPaisa = (price) => {
 };
 
 const toRupees = (paisa) => paisa / 100;
+
+const formatCurrency = (value) => {
+  if (value === null || value === undefined || value === '') return 'Rs. 0';
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'Rs. 0';
+  return `Rs. ${numeric.toLocaleString('en-PK', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+};
 
 const validStock = (stock) => {
   if (stock == null || !Number.isFinite(Number(stock))) return 0;
@@ -60,6 +72,10 @@ export default function POS() {
   const [billDiscount, setBillDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [cashReceived, setCashReceived] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerLoading, setCustomerLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState(null);
   const [saleSuccess, setSaleSuccess] = useState(null);
@@ -109,6 +125,31 @@ export default function POS() {
       if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
     };
   }, [fetchProductList]);
+
+  useEffect(() => {
+    if (paymentMethod !== 'KHATA') {
+      setCustomers([]);
+      setSelectedCustomer(null);
+      setCustomerSearch('');
+      return;
+    }
+    let cancelled = false;
+    const loadCustomers = async () => {
+      setCustomerLoading(true);
+      try {
+        const data = await fetchCustomers();
+        if (!cancelled) setCustomers(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setCustomers([]);
+      } finally {
+        if (!cancelled) setCustomerLoading(false);
+      }
+    };
+    void loadCustomers();
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentMethod]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;
@@ -270,6 +311,10 @@ export default function POS() {
         return `Cash received (Rs. ${toRupees(receivedPaisa)}) is less than total (Rs. ${toRupees(payablePaisa)}).`;
       }
     }
+
+    if (paymentMethod === 'KHATA' && !selectedCustomer) {
+      return 'Please select a customer for Khata (credit) sales.';
+    }
     return null;
   };
 
@@ -290,13 +335,17 @@ export default function POS() {
         quantity: item.quantity,
         unitPrice: toRupees(toPaisa(item.product.sellPrice)), // ORIGINAL price
       })),
+      ...(paymentMethod === 'KHATA' && selectedCustomer
+        ? { customerId: selectedCustomer.id }
+        : {}),
     };
 
     try {
       const res = await createSale(saleData);
-      setSaleSuccess(res.sale);
+      setSaleSuccess({ ...res.sale, customer: selectedCustomer });
       clearCart();
       setCashReceived('');
+      setSelectedCustomer(null);
       setPaymentMethod('CASH');
     } catch (err) {
       setCheckoutError(err.response?.data?.error?.message || 'Failed to complete sale.');
@@ -567,6 +616,93 @@ export default function POS() {
                 </div>
               )}
 
+              {paymentMethod === 'KHATA' && (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--app-muted)]" />
+                    <input
+                      type="text"
+                      placeholder="Search customers by name or phone..."
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
+                    />
+                    {customerLoading && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--app-muted)]">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedCustomer ? (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-2)]/50">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--app-text)]">
+                          {selectedCustomer.name}
+                        </p>
+                        <p className="text-xs text-[var(--app-muted)]">
+                          {formatCurrency(selectedCustomer.balance)} balance
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCustomer(null)}
+                        className="p-1.5 text-[var(--app-muted)] hover:text-red-600 transition-colors"
+                        title="Remove customer"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto border border-[var(--app-border)] rounded-lg bg-[var(--app-panel-2)]">
+                      {customers.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-[var(--app-muted)]">
+                          {customerSearch
+                            ? 'No matching customers.'
+                            : 'No customers available. Add one from the Customers page.'}
+                        </div>
+                      ) : (
+                        <ul>
+                          {customers
+                            .filter((c) =>
+                              String(c.name ?? '').toLowerCase().includes(customerSearch.toLowerCase()) ||
+                              String(c.phone ?? '').includes(customerSearch)
+                            )
+                            .slice(0, 10)
+                            .map((c) => (
+                              <li key={c.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedCustomer(c)}
+                                  className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-left hover:bg-[var(--app-panel)] transition-colors border-b border-[var(--app-border)]/50 last:border-0"
+                                >
+                                  <span>
+                                    <span className="font-medium text-[var(--app-text)]">
+                                      {c.name}
+                                    </span>
+                                    <br />
+                                    <span className="text-xs text-[var(--app-muted)]">
+                                      {c.phone || 'No phone'}
+                                    </span>
+                                  </span>
+                                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                                    {formatCurrency(c.balance)}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {!selectedCustomer && (
+                    <p className="text-xs text-red-600 font-medium">
+                      Please select a customer to proceed with Khata sale.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {checkoutError && (
                 <div className="p-2.5 bg-red-50 dark:bg-red-500/10 border border-red-100 rounded-lg flex items-start gap-2 text-xs text-red-600 font-medium">
                   <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
@@ -593,7 +729,14 @@ export default function POS() {
             <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-8 flex flex-col items-center text-white">
               <CheckCircle className="h-16 w-16 mb-4" />
               <h2 className="text-2xl font-extrabold">Sale Complete!</h2>
-              <p className="text-sm mt-1 bg-green-700/30 px-3 py-1 rounded-full">Invoice: {saleSuccess.invoiceNo}</p>
+              <p className="text-sm mt-1 bg-green-700/30 px-3 py-1 rounded-full">
+                Invoice: {saleSuccess.invoiceNo}
+              </p>
+              {saleSuccess.customer && (
+                <p className="text-sm mt-1 bg-blue-700/30 px-3 py-1 rounded-full">
+                  Customer: {saleSuccess.customer.name}
+                </p>
+              )}
             </div>
             <div className="p-6 space-y-4">
               <div className="flex justify-between pb-3 border-b border-[var(--app-border)]">
