@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -5,6 +7,9 @@ import { resolveUploadDir } from './services/upload.service.js';
 import { IMAGE_NAME_RE } from './middleware/upload.js';
 import apiRoutes from './routes/index.js';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FRONTEND_DIST = path.resolve(__dirname, '../../frontend/dist');
 
 // Inside app.use('/uploads', ...) Express strips the mount prefix, so req.path
 // is '/<name>' (not '/uploads/<name>'). Match the image name only.
@@ -57,6 +62,32 @@ export function createApp() {
   });
 
   app.use('/api', apiRoutes);
+  app.use(express.static(FRONTEND_DIST));
+
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return next();
+    }
+
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+
+    if (path.extname(req.path)) {
+      return next();
+    }
+
+    return res.sendFile(path.join(FRONTEND_DIST, 'index.html'), (error) => {
+      if (error) {
+        if (error.code === 'ENOENT') {
+          return next();
+        }
+        return next(error);
+      }
+      return undefined;
+    });
+  });
+
   app.use(notFoundHandler);
   app.use(errorHandler);
   return app;
