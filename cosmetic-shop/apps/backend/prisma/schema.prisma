@@ -76,8 +76,13 @@ model Sale {
   discount      Float      @default(0)
   total         Float
   paymentMethod String
+  customerId    Int?
+  customer      Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  khataTransactions KhataTransaction[]
   items         SaleItem[]
   createdAt     DateTime   @default(now())
+
+  @@index([customerId])
 }
 
 model SaleItem {
@@ -117,4 +122,35 @@ model Expense {
   createdAt   DateTime @default(now())
 
   @@index([date])
+}
+
+model Customer {
+  id           Int                @id @default(autoincrement())
+  name         String
+  phone        String?            @unique
+  email        String?
+  address      String?
+  notes        String?
+  balance      Float              @default(0)
+  transactions KhataTransaction[]
+  sales        Sale[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([name])
+}
+
+model KhataTransaction {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  type        String
+  amount      Float
+  description String?
+  saleId      Int?
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sale        Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([saleId])
 }

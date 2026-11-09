@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma.js';
 import { createSaleSchema } from '../schemas/sale.schema.js';
 import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
 import { formatInvoiceNo } from '../utils/invoiceNo.js';
+import { recordSale } from '../services/khata.service.js';
 import { PAYMENT_METHODS, INVOICE_PREFIX } from '../config/constants.js';
 
 const productLocks = new Map();
@@ -51,7 +52,7 @@ async function acquireInvoiceLock() {
 
 export async function createSale(userId, data) {
   const parsed = createSaleSchema.parse(data);
-  const { paymentMethod, discount, items } = parsed;
+  const { paymentMethod, discount, items, customerId } = parsed;
 
   const productIds = items
     .filter((item) => item.productId !== undefined && item.productId !== null)
@@ -140,6 +141,14 @@ export async function createSale(userId, data) {
       });
       const invoiceNo = formatInvoiceNo(year, existingCount + 1);
 
+      // KHATA sales require an existing customer. Validate BEFORE inserting the
+      // Sale so a missing customer yields 404 rather than a foreign-key
+      // violation (409) from the database.
+      if (paymentMethod === 'KHATA') {
+        const khataCustomer = await tx.customer.findUnique({ where: { id: customerId } });
+        if (!khataCustomer) throw httpError(404, 'Customer not found');
+      }
+
       const sale = await tx.sale.create({
         data: {
           invoiceNo,
@@ -147,9 +156,18 @@ export async function createSale(userId, data) {
           discount: discountValue,
           total: totalValue,
           paymentMethod,
+          customerId: paymentMethod === 'KHATA' ? customerId : undefined,
           createdAt: new Date(),
         },
       });
+
+      // KHATA sales create a ledger entry and increase the customer balance
+      // inside the SAME transaction as the sale. If anything fails, the whole
+      // transaction (sale + items + stock + ledger + balance) rolls back, so
+      // no orphan ledger entry or balance change can be left behind.
+      if (paymentMethod === 'KHATA') {
+        await recordSale(customerId, sale.id, sale.total, `Credit sale ${sale.invoiceNo}`, tx);
+      }
 
       const finalizedItems = saleItemsData.map((item) => ({ ...item, saleId: sale.id }));
       await tx.saleItem.createMany({ data: finalizedItems });
