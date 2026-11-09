@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { X, Upload, Loader2, Save, Image as ImageIcon } from 'lucide-react';
+import { X, Upload, Loader2, Save, Image as ImageIcon, Plus } from 'lucide-react';
+import { createBrand } from '../api/brands';
+import { createCategory } from '../api/categories';
 import {
   createProduct,
   updateProduct,
   uploadProductImage,
 } from '../api/products';
+
+const CUSTOM_BRAND_VALUE = '__custom_brand__';
+const CUSTOM_CATEGORY_VALUE = '__custom_category__';
 
 const createEmptyForm = () => ({
   name: '',
@@ -26,23 +31,42 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
   const [uploading, setUploading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
+  const [brandOptions, setBrandOptions] = useState(brands);
+  const [categoryOptions, setCategoryOptions] = useState(categories);
+  const [showBrandCustom, setShowBrandCustom] = useState(false);
+  const [showCategoryCustom, setShowCategoryCustom] = useState(false);
+  const [customBrandName, setCustomBrandName] = useState('');
+  const [customCategoryName, setCustomCategoryName] = useState('');
+  const [customCategoryType, setCustomCategoryType] = useState('COSMETIC');
+  const [brandError, setBrandError] = useState('');
+  const [categoryError, setCategoryError] = useState('');
+  const [creatingBrand, setCreatingBrand] = useState(false);
+  const [creatingCategory, setCreatingCategory] = useState(false);
 
   const isEditing = !!product;
 
   const generateSku = (catId) => {
-    const cat = categories.find((c) => c.id === Number(catId));
+    const cat = categoryOptions.find((c) => c.id === Number(catId));
     const prefix = cat ? cat.name.substring(0, 3).toUpperCase() : 'PRD';
     const timestamp = Date.now().toString().slice(-6);
     return `${prefix}-${timestamp}`;
   };
 
   const getProductType = (catId) => {
-    const cat = categories.find((c) => c.id === Number(catId));
+    const cat = categoryOptions.find((c) => c.id === Number(catId));
     if (!cat) return 'COSMETIC';
     const name = cat.name.toLowerCase();
     if (name.includes('jewel')) return 'JEWELRY';
     return 'COSMETIC';
   };
+
+  useEffect(() => {
+    setBrandOptions(brands);
+  }, [brands]);
+
+  useEffect(() => {
+    setCategoryOptions(categories);
+  }, [categories]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -68,6 +92,12 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
 
     setSelectedImage(null);
     setError('');
+    setShowBrandCustom(false);
+    setShowCategoryCustom(false);
+    setCustomBrandName('');
+    setCustomCategoryName('');
+    setBrandError('');
+    setCategoryError('');
   }, [isOpen, product]);
 
   useEffect(() => {
@@ -89,6 +119,98 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
       }
       return newData;
     });
+  };
+
+  const handleBrandChange = (e) => {
+    const { value } = e.target;
+    if (value === CUSTOM_BRAND_VALUE) {
+      setShowBrandCustom(true);
+      setBrandError('');
+      setCustomBrandName('');
+      setFormData((prev) => ({ ...prev, brandId: '' }));
+      return;
+    }
+
+    setShowBrandCustom(false);
+    setBrandError('');
+    setCustomBrandName('');
+    setFormData((prev) => ({ ...prev, brandId: value }));
+  };
+
+  const handleCategoryChange = (e) => {
+    const { value } = e.target;
+    if (value === CUSTOM_CATEGORY_VALUE) {
+      setShowCategoryCustom(true);
+      setCategoryError('');
+      setCustomCategoryName('');
+      setFormData((prev) => ({ ...prev, categoryId: '' }));
+      return;
+    }
+
+    setShowCategoryCustom(false);
+    setCategoryError('');
+    setCustomCategoryName('');
+    setFormData((prev) => {
+      const next = { ...prev, categoryId: value };
+      if (!isEditing && value) {
+        next.sku = generateSku(value);
+      }
+      return next;
+    });
+  };
+
+  const handleCreateBrand = async () => {
+    const name = customBrandName.trim();
+    if (!name) {
+      setBrandError('Enter a brand name first.');
+      return;
+    }
+
+    setCreatingBrand(true);
+    setBrandError('');
+
+    try {
+      const created = await createBrand({ name });
+      setBrandOptions((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setFormData((prev) => ({ ...prev, brandId: String(created.id) }));
+      setShowBrandCustom(false);
+      setCustomBrandName('');
+    } catch (err) {
+      setBrandError(err.response?.data?.error?.message || 'Could not create the brand.');
+    } finally {
+      setCreatingBrand(false);
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    const name = customCategoryName.trim();
+    if (!name) {
+      setCategoryError('Enter a category name first.');
+      return;
+    }
+
+    setCreatingCategory(true);
+    setCategoryError('');
+
+    try {
+      const created = await createCategory({ name, type: customCategoryType });
+      setCategoryOptions((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setFormData((prev) => {
+        const next = { ...prev, categoryId: String(created.id) };
+        if (!isEditing && !next.sku) {
+          const prefix = (created.name || 'PRD').substring(0, 3).toUpperCase();
+          const timestamp = Date.now().toString().slice(-6);
+          next.sku = `${prefix || 'PRD'}-${timestamp}`;
+        }
+        return next;
+      });
+      setShowCategoryCustom(false);
+      setCustomCategoryName('');
+    } catch (err) {
+      setCategoryError(err.response?.data?.error?.message || 'Could not create the category.');
+    } finally {
+      setCreatingCategory(false);
+    }
   };
 
   const handleImageSelect = (event) => {
@@ -219,12 +341,43 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
               </div>
               <div className="col-span-2 sm:col-span-1">
                 <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">Category *</label>
-                <select required name="categoryId" value={formData.categoryId} onChange={handleChange} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl focus:ring-2 focus:ring-indigo-500 text-[var(--app-text)] outline-none">
+                <select required name="categoryId" value={formData.categoryId || ''} onChange={handleCategoryChange} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl focus:ring-2 focus:ring-indigo-500 text-[var(--app-text)] outline-none">
                   <option value="">Select Category</option>
-                  {categories.map((c) => (
+                  {categoryOptions.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
+                  <option value={CUSTOM_CATEGORY_VALUE}>+ Add custom category</option>
                 </select>
+                {showCategoryCustom && (
+                  <div className="mt-2 space-y-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/70 p-3">
+                    <div className="flex gap-2">
+                      <input
+                        value={customCategoryName}
+                        onChange={(e) => setCustomCategoryName(e.target.value)}
+                        placeholder="New category name"
+                        className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <select
+                        value={customCategoryType}
+                        onChange={(e) => setCustomCategoryType(e.target.value)}
+                        className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="COSMETIC">Cosmetic</option>
+                        <option value="JEWELRY">Jewelry</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateCategory}
+                      disabled={creatingCategory}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {creatingCategory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      {creatingCategory ? 'Saving...' : 'Add category'}
+                    </button>
+                    {categoryError && <p className="text-xs text-red-600">{categoryError}</p>}
+                  </div>
+                )}
               </div>
 
               <div className="col-span-2 sm:col-span-1">
@@ -233,12 +386,33 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
               </div>
               <div className="col-span-2 sm:col-span-1">
                 <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">Brand</label>
-                <select name="brandId" value={formData.brandId} onChange={handleChange} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl focus:ring-2 focus:ring-indigo-500 text-[var(--app-text)] outline-none">
+                <select name="brandId" value={formData.brandId || ''} onChange={handleBrandChange} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl focus:ring-2 focus:ring-indigo-500 text-[var(--app-text)] outline-none">
                   <option value="">No Brand</option>
-                  {brands.map((b) => (
+                  {brandOptions.map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
+                  <option value={CUSTOM_BRAND_VALUE}>+ Add custom brand</option>
                 </select>
+                {showBrandCustom && (
+                  <div className="mt-2 flex gap-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/70 p-3">
+                    <input
+                      value={customBrandName}
+                      onChange={(e) => setCustomBrandName(e.target.value)}
+                      placeholder="New brand name"
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateBrand}
+                      disabled={creatingBrand}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {creatingBrand ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      {creatingBrand ? 'Saving...' : 'Add'}
+                    </button>
+                  </div>
+                )}
+                {brandError && <p className="mt-2 text-xs text-red-600">{brandError}</p>}
               </div>
 
               <div className="col-span-2 sm:col-span-1">

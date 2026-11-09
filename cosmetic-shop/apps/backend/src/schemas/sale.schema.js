@@ -8,7 +8,7 @@ import { z } from 'zod';
  *   (client-supplied unitCost must never be trusted)
  */
 export const createSaleSchema = z.object({
-  paymentMethod: z.enum(['CASH', 'CARD', 'MOBILE']),
+  paymentMethod: z.enum(['CASH', 'CARD', 'JAZZCASH', 'MOBILE']),
 
   discount: z.number().min(0).default(0),
 
