@@ -8,7 +8,11 @@ import { z } from 'zod';
  *   (client-supplied unitCost must never be trusted)
  */
 export const createSaleSchema = z.object({
-  paymentMethod: z.enum(['CASH', 'CARD', 'JAZZCASH', 'MOBILE']),
+  paymentMethod: z.enum(['CASH', 'CARD', 'JAZZCASH', 'MOBILE', 'KHATA']),
+
+  // Associates the sale with a credit customer. Required when paying by KHATA;
+  // accepted (but does not create a ledger entry) for other payment methods.
+  customerId: z.number().int().positive().optional(),
 
   discount: z.number().min(0).default(0),
 
@@ -23,7 +27,8 @@ export const createSaleSchema = z.object({
       })
     )
     .min(1),
-}).refine(
+})
+.refine(
   (data) => {
     const items = data.items;
     // Exactly one of productId or manualName must be provided per item
@@ -35,4 +40,13 @@ export const createSaleSchema = z.object({
     return true;
   },
   'Exactly one of productId or manualName must be provided'
+)
+.refine(
+  (data) => {
+    if (data.paymentMethod === 'KHATA') {
+      return data.customerId !== undefined && data.customerId !== null && data.customerId > 0;
+    }
+    return true;
+  },
+  'customerId is required for KHATA sales'
 );
