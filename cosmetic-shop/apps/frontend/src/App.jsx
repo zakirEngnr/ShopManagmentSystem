@@ -8,11 +8,31 @@ import POS from './pages/POS';
 import Products from './pages/Products';
 import Reports from './pages/Reports';
 
+const THEME_STORAGE_KEY = 'eshal-theme';
+
 function AppRouter() {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light';
+    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    if (storedTheme === 'dark' || storedTheme === 'light') {
+      return storedTheme;
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -68,13 +88,25 @@ function AppRouter() {
     <Routes>
       <Route
         path="/login"
-        element={<Login isAuthenticated={isAuthenticated} onLogin={handleLogin} />}
+        element={
+          <Login
+            isAuthenticated={isAuthenticated}
+            onLogin={handleLogin}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        }
       />
       <Route
         path="/"
         element={
           isAuthenticated ? (
-            <AppLayout user={user} onLogout={handleLogout} />
+            <AppLayout
+              user={user}
+              onLogout={handleLogout}
+              theme={theme}
+              onToggleTheme={toggleTheme}
+            />
           ) : (
             <Navigate
               to={`/login?next=${encodeURIComponent(location.pathname)}`}

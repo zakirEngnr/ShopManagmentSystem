@@ -1,6 +1,6 @@
-import client from './client';
+import client, { TOKEN_STORAGE_KEY } from './client';
 
-export async function fetchProducts({ search, type, limit = 50 } = {}) {
+export async function fetchProducts({ search, type, limit = 50, page = 1 } = {}) {
   const params = new URLSearchParams();
 
   if (search?.trim()) {
@@ -11,6 +11,7 @@ export async function fetchProducts({ search, type, limit = 50 } = {}) {
     params.append('type', type);
   }
 
+  params.append('page', String(page));
   params.append('limit', String(limit));
 
   const res = await client.get(`/products?${params.toString()}`);
@@ -123,13 +124,33 @@ export async function uploadProductImage(id, file) {
   const formData = new FormData();
   formData.append('image', file);
 
-  const res = await client.post(`/products/${id}/image`, formData);
+  const apiBase = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+  const token = (() => {
+    try {
+      return localStorage.getItem(TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  })();
 
-  if (!res.data || typeof res.data !== 'object' || !res.data.product) {
+  const response = await fetch(`${apiBase}/api/products/${id}/image`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || 'Image upload failed.';
+    throw new Error(message);
+  }
+
+  if (!payload || typeof payload !== 'object' || !payload.product) {
     throw new Error('Invalid image upload response from server.');
   }
 
-  return res.data;
+  return payload;
 }
 
 /**

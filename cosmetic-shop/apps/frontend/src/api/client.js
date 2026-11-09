@@ -25,13 +25,20 @@ const client = axios.create({
 });
 
 // Attach the stored Bearer token to outgoing requests.
-// FormData requests keep their auto-generated multipart boundary because Axios
-// overrides the default Content-Type for FormData bodies.
+// Multipart uploads must not keep the default JSON Content-Type, or the
+// browser will send FormData as a plain JSON object and the server will not
+// receive the uploaded file.
 client.interceptors.request.use((config) => {
   const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  if (config.data instanceof FormData) {
+    delete config.headers['Content-Type'];
+    delete config.headers['content-type'];
+  }
+
   return config;
 });
 
