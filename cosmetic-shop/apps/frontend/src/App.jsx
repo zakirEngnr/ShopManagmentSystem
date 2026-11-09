@@ -7,6 +7,10 @@ import Dashboard from './pages/Dashboard';
 import POS from './pages/POS';
 import Products from './pages/Products';
 import Reports from './pages/Reports';
+import Expenses from './pages/Expenses';
+import Customers from './pages/Customers';
+import CustomerLedger from './pages/CustomerLedger';
+import OutstandingCustomers from './pages/OutstandingCustomers';
 
 const THEME_STORAGE_KEY = 'eshal-theme';
 
@@ -27,6 +31,7 @@ function AppRouter() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    document.title = 'Eshal Cosmetics & Artificial Jewellery';
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
@@ -118,7 +123,13 @@ function AppRouter() {
         <Route index element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
         <Route path="products" element={<Products />} />
+        <Route path="expenses" element={<Expenses />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="customers" element={<Customers />}>
+          <Route index element={<Customers />} />
+          <Route path="outstanding" element={<OutstandingCustomers />} />
+          <Route path=":id" element={<CustomerLedger />} />
+        </Route>
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
