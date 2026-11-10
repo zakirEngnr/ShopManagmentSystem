@@ -113,9 +113,14 @@ export default function Customers() {
 
         const list = Array.isArray(data) ? data : [];
         let filtered = list;
+        // When on Business / Personal tab, exclude RETAIL customers since the
+        // backend only supports filtering by a single type at a time.
+        if (customerTab === 'business-personal') {
+          filtered = filtered.filter((c) => c.type !== 'RETAIL');
+        }
         if (search && search.trim()) {
           const q = search.trim().toLowerCase();
-          filtered = list.filter(
+          filtered = filtered.filter(
             (c) =>
               String(c?.name ?? '').toLowerCase().includes(q) ||
               String(c?.phone ?? '').includes(q)
@@ -135,7 +140,7 @@ export default function Customers() {
         }
       }
     },
-    [tabType]
+    [tabType, customerTab]
   );
 
   useEffect(() => {
