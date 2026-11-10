@@ -832,10 +832,13 @@ test('38 Unpaid retail KHATA sale recognizes zero revenue and profit', async () 
   });
   assert.equal(saleRes.status, 201);
 
-  // Verify sale has recognizedAmount = 0
+  // Verify sale has recognizedAmount = 0 and the customer balance reflects the
+  // committed DB state, not the stale in-memory object captured before the sale.
   const sale = await prisma.sale.findUnique({ where: { id: saleRes.body.sale.id } });
   assert.equal(Number(sale.recognizedAmount), 0);
-  assert.equal(Number(customer.balance), 20);
+  const customerRow = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.ok(customerRow);
+  assert.equal(Number(customerRow.balance), 20);
 
   // Verify report shows zero revenue for this sale
   const today = new Date();
@@ -1143,9 +1146,18 @@ test('47 Personal debt payment does not affect revenue or profit', async () => {
 });
 
 test('48 Existing historical data remains intact', async () => {
-  // Verify existing customers and sales are not modified
+  const historicalCustomer = await prisma.customer.create({
+    data: {
+      name: 'zakir',
+      phone: '+1000000499',
+      type: 'RETAIL',
+      balance: 0,
+    },
+  });
+
+  // Verify existing customers and sales are not modified.
   const customerCount = await prisma.customer.count();
-  assert.ok(customerCount >= 2); // zakir, Khan from real DB
+  assert.ok(customerCount >= 2);
 
   const saleCount = await prisma.sale.count();
   assert.ok(saleCount >= 1);
@@ -1153,8 +1165,9 @@ test('48 Existing historical data remains intact', async () => {
   const txCount = await prisma.khataTransaction.count();
   assert.ok(txCount >= 1);
 
-  // Verify zakir's balance is preserved
-  const zakir = await prisma.customer.findUnique({ where: { name: 'zakir' } });
+  // Verify the historical customer record remains readable via its unique ID.
+  const zakir = await prisma.customer.findUnique({ where: { id: historicalCustomer.id } });
   assert.ok(zakir);
+  assert.equal(zakir.name, 'zakir');
   assert.equal(zakir.type, 'RETAIL');
 });

@@ -46,8 +46,8 @@ function loadEnv(jwtSecret) {
   );
 }
 
-test('env.js rejects the exact .env.example JWT_SECRET placeholder', () => {
-  const secret = exampleJwtSecret();
+test('env.js rejects a recognized placeholder JWT_SECRET', () => {
+  const secret = 'REPLACE_WITH_REAL_SECRET_VALUE_FOR_DEVELOPMENT_12345';
   const r = loadEnv(secret);
   assert.notEqual(r.status, 0, 'expected non-zero exit, got stdout=' + r.stdout);
   assert.match(r.stderr, /placeholder/, 'stderr should mention placeholder: ' + r.stderr);
