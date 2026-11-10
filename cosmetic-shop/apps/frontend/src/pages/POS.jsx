@@ -69,8 +69,8 @@ export default function POS() {
   const [editingPriceId, setEditingPriceId] = useState(null);
   const [tempPrice, setTempPrice] = useState('');
 
-  const [billDiscount, setBillDiscount] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [billDiscount, setBillDiscount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customers, setCustomers] = useState([]);
@@ -260,7 +260,11 @@ export default function POS() {
 
   const clearCart = useCallback(() => {
     setCart([]);
-    setBillDiscount(0);
+    setBillDiscount('');
+    setPaymentMethod('');
+    setCashReceived('');
+    setSelectedCustomer(null);
+    setCustomerSearch('');
   }, []);
 
   const startEditingPrice = (item) => {
@@ -296,14 +300,15 @@ export default function POS() {
 
   const subtotalPaisa = cart.reduce((sum, item) => sum + lineOriginalPaisa(item), 0);
   const itemDiscountsPaisa = cart.reduce((sum, item) => sum + lineDiscountPaisa(item), 0);
-  const billDiscountPaisa = toPaisa(billDiscount);
+  const billDiscountPaisa = toPaisa(Number(billDiscount) || 0);
   const totalDiscountPaisa = itemDiscountsPaisa + billDiscountPaisa;
   const payablePaisa = Math.max(0, subtotalPaisa - totalDiscountPaisa);
 
   const validateCheckout = () => {
     if (cart.length === 0) return 'Cart is empty.';
+    if (!paymentMethod) return 'Please select a payment method.';
     if (totalDiscountPaisa > subtotalPaisa) return 'Discount cannot exceed subtotal.';
-    
+
     if (paymentMethod === 'CASH') {
       const receivedNum = Number(cashReceived);
       const receivedPaisa = isNaN(receivedNum) || cashReceived === '' ? 0 : toPaisa(receivedNum);
@@ -346,7 +351,7 @@ export default function POS() {
       clearCart();
       setCashReceived('');
       setSelectedCustomer(null);
-      setPaymentMethod('CASH');
+      setPaymentMethod('');
     } catch (err) {
       setCheckoutError(err.response?.data?.error?.message || 'Failed to complete sale.');
     } finally {
@@ -572,8 +577,12 @@ export default function POS() {
                     <input
                       type="number"
                       min="0"
-                      value={billDiscount || ''}
-                      onChange={(e) => { setBillDiscount(Number(e.target.value)); setCheckoutError(null); }}
+                      value={billDiscount}
+                      onChange={(e) => {
+                        const nextValue = e.target.value === '' ? '' : Number(e.target.value);
+                        setBillDiscount(nextValue);
+                        setCheckoutError(null);
+                      }}
                       className="w-full pl-7 pr-2 py-1 text-right text-sm font-bold bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-lg text-[var(--app-text)] outline-none"
                       placeholder="0"
                     />
@@ -590,7 +599,15 @@ export default function POS() {
                 {PAYMENT_METHODS.map((m) => (
                   <button
                     key={m.value}
-                    onClick={() => { setPaymentMethod(m.value); setCheckoutError(null); }}
+                    onClick={() => {
+                      setPaymentMethod(m.value);
+                      setCheckoutError(null);
+                      if (m.value !== 'CASH') setCashReceived('');
+                      if (m.value !== 'KHATA') {
+                        setSelectedCustomer(null);
+                        setCustomerSearch('');
+                      }
+                    }}
                     className={`flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border text-xs font-bold transition-all ${paymentMethod === m.value ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'bg-[var(--app-panel-2)] border-[var(--app-border)] text-[var(--app-text-soft)]'}`}
                   >
                     <m.icon className="h-4 w-4" />
