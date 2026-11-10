@@ -17,8 +17,8 @@ const NAVIGATION = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/pos', label: 'Point of Sale', icon: ShoppingCart },
   { to: '/products', label: 'Products', icon: Package },
-  { to: '/customers', label: 'Customers', icon: Users },
-  { to: '/customers/outstanding', label: 'Outstanding Khata', icon: Wallet },
+  { to: '/customers', label: 'People / Udhaar', icon: Users },
+  { to: '/customers/outstanding', label: 'Outstanding Udhaar', icon: Wallet },
   { to: '/expenses', label: 'Expenses', icon: ReceiptText },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
 ];
@@ -66,6 +66,7 @@ export default function AppLayout({ user, onLogout, theme, onToggleTheme }) {
               <NavLink
                 key={item.to}
                 to={item.to}
+                end={item.to === '/' || item.to === '/customers'}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 group border ${
                     isActive

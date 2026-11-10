@@ -272,10 +272,10 @@ export default function Customers() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-extrabold text-[var(--app-text)]">
-            Customers
+            People / Udhaar
           </h2>
           <p className="text-sm text-[var(--app-muted)] mt-1">
-            Manage credit customers and their outstanding balances.
+            Manage who owes you money (Udhaar)
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -285,7 +285,8 @@ export default function Customers() {
             disabled={refreshing}
             className="flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-2.5 text-sm font-medium text-[var(--app-text)] transition hover:bg-[var(--app-panel-2)] disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4 animate-spin" /> Refresh
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
           <button
             type="button"
@@ -293,7 +294,7 @@ export default function Customers() {
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-xl bg-[var(--app-accent)] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-70"
           >
-            <Plus className="h-4 w-4" /> Add Customer
+            <Plus className="h-4 w-4" /> + Add Person
           </button>
         </div>
       </div>
@@ -332,7 +333,7 @@ export default function Customers() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] p-5">
           <p className="text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider">
-            Total Customers
+            Total People
           </p>
           <p className="text-2xl font-bold text-[var(--app-text)] mt-1">
             {summary.totalCustomers}
@@ -348,7 +349,7 @@ export default function Customers() {
         </div>
         <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] p-5">
           <p className="text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider">
-            Customers with Balance
+            People with Udhaar
           </p>
           <p className="text-2xl font-bold text-[var(--app-text)] mt-1">
             {summary.customersWithBalance}
@@ -390,7 +391,7 @@ export default function Customers() {
           <thead>
             <tr className="border-b border-[var(--app-border)]">
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
-                Customer
+                Person
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
                 Phone
@@ -399,7 +400,7 @@ export default function Customers() {
                 Email
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
-                Balance
+                Udhaar (Owes You)
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
                 Created
@@ -425,21 +426,20 @@ export default function Customers() {
                     </p>
                   ) : searchQuery ? (
                     <p className="text-sm text-[var(--app-muted)]">
-                      No customers match your search.
+                      No people match your search.
                     </p>
                   ) : (
                     <div className="flex flex-col items-center justify-center gap-3">
                       <UserPlus className="h-8 w-8 text-[var(--app-muted)]" />
                       <p className="text-sm text-[var(--app-muted)]">
-                        No customers yet. Add your first customer to begin
-                        tracking credit.
+                        No people registered yet. Add someone you've given Udhaar to.
                       </p>
                       <button
                         type="button"
                         onClick={openCreate}
                         className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-2 text-sm font-medium text-[var(--app-text)] transition hover:bg-[var(--app-panel-2)]"
                       >
-                        Add Customer
+                        Add Person
                       </button>
                     </div>
                   )}
@@ -484,7 +484,7 @@ export default function Customers() {
                         : 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border border-green-100 dark:border-green-800'
                     }`}
                   >
-                    {formatCurrency(customer.balance)}
+                    {Number(customer.balance ?? 0) < 0 ? 'Advance / Paid Ahead' : formatCurrency(customer.balance)}
                   </span>
                 </td>
                 <td className="px-5 py-4">
@@ -497,7 +497,7 @@ export default function Customers() {
                     <button
                       type="button"
                       onClick={() => openEdit(customer)}
-                      title="Edit customer"
+                      title="Edit person"
                       className="p-2 rounded-md text-[var(--app-muted)] hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
                     >
                       <Edit className="h-4 w-4" />
@@ -508,7 +508,7 @@ export default function Customers() {
                         setDeleteTarget(customer);
                         setDeleteError(null);
                       }}
-                      title="Delete customer"
+                      title="Delete person"
                       className="p-2 rounded-md text-[var(--app-muted)] hover:bg-red-50 hover:text-red-600 transition-colors"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -531,14 +531,14 @@ export default function Customers() {
             <div className="flex items-center gap-2 mb-6">
               <UserPlus className="h-5 w-5 text-indigo-600" />
               <h3 className="text-xl font-extrabold text-[var(--app-text)]">
-                {editingCustomer ? 'Edit Customer' : 'Add New Customer'}
+                {editingCustomer ? 'Edit Person' : 'Add Person'}
               </h3>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">
-                  Customer Name
+                  Person Name
                 </label>
                 <input
                   type="text"
@@ -559,7 +559,7 @@ export default function Customers() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">
-                    Phone
+                    Phone Number (optional)
                   </label>
                   <input
                     type="tel"
@@ -626,7 +626,7 @@ export default function Customers() {
                   onChange={(e) => setForm({ ...form, notes: e.target.value })}
                   rows={3}
                   className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
-                  placeholder="Optional notes about this customer"
+                  placeholder="Optional notes about this person"
                 />
                 {formErrors.notes && (
                   <p className="mt-1 text-xs font-medium text-red-600">
@@ -663,7 +663,7 @@ export default function Customers() {
                   ) : (
                     <>
                       <Plus className="h-4 w-4" />
-                      {editingCustomer ? 'Save Changes' : 'Create Customer'}
+                      {editingCustomer ? 'Save Changes' : 'Create Person'}
                     </>
                   )}
                 </button>
@@ -684,14 +684,14 @@ export default function Customers() {
               <Trash2 className="h-5 w-5" />
             </div>
             <h3 className="text-center text-xl font-extrabold text-[var(--app-text)]">
-              Delete Customer?
+              Delete Person?
             </h3>
             <p className="mt-2 text-center text-sm text-[var(--app-muted)]">
               This will permanently remove{' '}
               <span className="font-bold text-[var(--app-text)]">
                 {deleteTarget.name}
               </span>{' '}
-              from the customer list.
+              from the person list.
             </p>
 
             {deleteError && (

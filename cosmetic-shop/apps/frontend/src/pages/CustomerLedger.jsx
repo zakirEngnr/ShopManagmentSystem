@@ -212,8 +212,8 @@ export default function CustomerLedger() {
     );
   }
 
-  const isPositive = Number(customer.balance ?? 0) > 0;
-  const isNegative = Number(customer.balance ?? 0) < 0;
+  const owesAmount = Math.max(Number(customer.balance ?? 0), 0);
+  const hasOutstanding = owesAmount > 0;
 
   return (
     <div className="space-y-6">
@@ -224,13 +224,13 @@ export default function CustomerLedger() {
             onClick={() => navigate('/customers')}
             className="inline-flex items-center gap-2 text-sm font-medium text-[var(--app-text-soft)] hover:text-indigo-600 transition-colors"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Customers
+            <ArrowLeft className="h-4 w-4" /> Back to People / Udhaar
           </button>
           <h2 className="text-2xl font-extrabold text-[var(--app-text)] mt-3 md:mt-0">
             {customer.name}
           </h2>
           <p className="text-sm text-[var(--app-muted)]">
-            Customer #{customer.id} · Credit Ledger
+            Udhaar history for {customer.name}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -240,7 +240,8 @@ export default function CustomerLedger() {
             disabled={refreshing}
             className="flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-2.5 text-sm font-medium text-[var(--app-text)] transition hover:bg-[var(--app-panel-2)] disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4 animate-spin" /> Refresh
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
           </button>
           <button
             type="button"
@@ -248,7 +249,7 @@ export default function CustomerLedger() {
             disabled={paying}
             className="inline-flex items-center gap-2 rounded-xl bg-[var(--app-accent)] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-70"
           >
-            <Plus className="h-4 w-4" /> Record Payment
+            <Plus className="h-4 w-4" /> Record Payment Received
           </button>
         </div>
       </div>
@@ -303,25 +304,23 @@ export default function CustomerLedger() {
           </div>
           <div className="flex flex-col items-end gap-2">
             <p className="text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider">
-              Current Balance
+              Current Udhaar
             </p>
             <p
               className={`text-3xl font-bold ${
-                isPositive
+                hasOutstanding
                   ? 'text-amber-700 dark:text-amber-400'
-                  : isNegative
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : 'text-slate-700 dark:text-slate-400'
+                  : 'text-slate-700 dark:text-slate-400'
               }`}
             >
-              {formatCurrency(customer.balance)}
+              {formatCurrency(owesAmount)}
             </p>
             <p className="text-xs text-[var(--app-muted)]">
-              {isPositive
-                ? 'Customer owes this amount'
-                : isNegative
-                  ? 'Customer has advance credit'
-                  : 'No outstanding debt'}
+              {Number(customer.balance ?? 0) < 0
+                ? 'Advance / Paid Ahead'
+                : hasOutstanding
+                  ? 'This person owes you this amount'
+                  : 'No outstanding amount'}
             </p>
           </div>
         </div>
@@ -345,29 +344,23 @@ export default function CustomerLedger() {
           <thead>
             <tr className="border-b border-[var(--app-border)]">
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
-                Date
+                Customer
+              </th>
+              <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
+                Amount Owed
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
-                Type
+                Product
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
-                Description
-              </th>
-              <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
-                Debit
-              </th>
-              <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
-                Credit
-              </th>
-              <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
-                Balance
+                Sale
               </th>
             </tr>
           </thead>
           <tbody>
             {transactions.length === 0 && (
               <tr>
-                <td colSpan="6" className="px-5 py-12 text-center">
+                <td colSpan="4" className="px-5 py-12 text-center">
                   {loading ? (
                     <div className="flex flex-col items-center justify-center gap-2 text-[var(--app-muted)]">
                       <Loader2 className="h-6 w-6 animate-spin" />
@@ -384,67 +377,41 @@ export default function CustomerLedger() {
                 </td>
               </tr>
             )}
-            {runningBalance.map((tx) => {
-              const config = TYPE_CONFIG[tx.type] || TYPE_CONFIG.ADJUSTMENT;
-              const isDebit = config.debit;
+            {transactions.map((tx) => {
               const amount = Number(tx.amount ?? 0);
+              const owes = tx.type === 'SALE' ? Math.max(amount, 0) : 0;
+              const productName = tx.description || 'Product details unavailable';
               return (
                 <tr
                   key={tx.id}
                   className="border-b border-[var(--app-border)]/50 hover:bg-[var(--app-panel-2)]/30 transition-colors"
                 >
                   <td className="px-5 py-4">
-                    <p className="text-sm text-[var(--app-text)]">
-                      {formatDate(tx.createdAt)}
-                    </p>
-                  </td>
-                  <td className="px-5 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border ${config.border} ${config.bg} ${config.color}`}
-                    >
-                      {config.label}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4">
-                    <p className="text-sm text-[var(--app-text)]">
-                      {tx.description || '-'}
-                    </p>
-                    {tx.saleId && (
-                      <p className="text-xs text-[var(--app-muted)]">
-                        Linked to sale #{tx.saleId}
-                      </p>
-                    )}
+                    <div>
+                      <p className="text-sm font-medium text-[var(--app-text)]">{customer.name}</p>
+                      <p className="text-xs text-[var(--app-muted)]">{formatDate(tx.createdAt)}</p>
+                    </div>
                   </td>
                   <td className="px-5 py-4 text-right">
-                    {isDebit ? (
-                      <span className="text-sm text-[var(--app-text)] font-medium">
-                        {formatCurrency(amount)}
+                    {owes > 0 ? (
+                      <span className="text-sm font-bold text-amber-700 dark:text-amber-400">
+                        {formatCurrency(owes)}
                       </span>
                     ) : (
                       <span className="text-sm text-[var(--app-text-soft)]">—</span>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-right">
-                    {!isDebit ? (
-                      <span className="text-sm text-[var(--app-text)] font-medium">
-                        {formatCurrency(amount)}
+                  <td className="px-5 py-4">
+                    <p className="text-sm text-[var(--app-text)]">{productName}</p>
+                  </td>
+                  <td className="px-5 py-4">
+                    {tx.saleId ? (
+                      <span className="text-sm font-medium text-[var(--app-text)]">
+                        Sale #{tx.saleId}
                       </span>
                     ) : (
                       <span className="text-sm text-[var(--app-text-soft)]">—</span>
                     )}
-                  </td>
-                  <td className="px-5 py-4 text-right">
-                    <span
-                      className={`text-sm font-bold ${
-                        tx.after > 0
-                          ? 'text-amber-700 dark:text-amber-400'
-                          : tx.after < 0
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : 'text-slate-700 dark:text-slate-400'
-                      }`}
-                    >
-                      {formatCurrency(tx.after)}
-                    </span>
                   </td>
                 </tr>
               );
@@ -489,7 +456,7 @@ export default function CustomerLedger() {
             <div className="flex items-center gap-2 mb-6">
               <CreditCard className="h-5 w-5 text-emerald-600" />
               <h3 className="text-xl font-extrabold text-[var(--app-text)]">
-                Record Payment
+                Record Payment Received
               </h3>
             </div>
             <p className="text-sm text-[var(--app-muted)] mb-4">
@@ -532,7 +499,7 @@ export default function CustomerLedger() {
                     setPaymentForm({ ...paymentForm, description: e.target.value })
                   }
                   className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
-                  placeholder="Cash payment / Bank transfer"
+                  placeholder="e.g., Paid cash, Bank transfer, etc."
                 />
               </div>
 
@@ -564,7 +531,7 @@ export default function CustomerLedger() {
                   ) : (
                     <>
                       <Plus className="h-4 w-4" />
-                      Record Payment
+                      Record Payment Received
                     </>
                   )}
                 </button>
