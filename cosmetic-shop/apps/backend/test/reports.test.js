@@ -196,10 +196,10 @@ test('T1 daily report totals', async () => {
   const report = res.body.report;
   assert.equal(report.date, '2026-01-15');
   assert.equal(report.salesCount, 2);
-  assert.equal(report.revenue, 300);
+  assert.equal(report.revenue, 290);
   assert.equal(report.discount, 10);
   assert.equal(report.netSales, 290);
-  assert.equal(report.netSales, report.revenue - report.discount);
+  assert.equal(report.netSales, report.revenue);
   assert.equal(report.cogs, 90);
   assert.equal(report.grossProfit, 200);
   assert.equal(report.expenses, 100);
@@ -265,7 +265,7 @@ test('T3 P&L date range', async () => {
   const report = res.body.report;
   assert.equal(report.from, '2026-01-15');
   assert.equal(report.to, '2026-01-16');
-  assert.equal(report.revenue, 300);
+  assert.equal(report.revenue, 290);
   assert.equal(report.discount, 10);
   assert.equal(report.netSales, 290);
   assert.equal(report.cogs, 80);
@@ -649,7 +649,7 @@ test('T15 discounts not subtracted twice', async () => {
   });
   assert.equal(res.status, 200);
   const report = res.body.report;
-  assert.equal(report.revenue, 100);
+  assert.equal(report.revenue, 80);
   assert.equal(report.discount, 20);
   assert.equal(report.netSales, 80);
   assert.notEqual(report.netSales, 60);

@@ -19,3 +19,13 @@ export async function fetchBrands() {
 
   return res.data.brands;
 }
+
+export async function createBrand(data) {
+  const res = await client.post('/brands', data);
+
+  if (!res.data || typeof res.data !== 'object' || !res.data.brand || typeof res.data.brand !== 'object') {
+    throw new Error('Invalid brand create response from server.');
+  }
+
+  return res.data.brand;
+}

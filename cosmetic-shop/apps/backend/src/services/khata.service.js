@@ -37,6 +37,13 @@ export async function recordSale(customerId, saleId, amount, description, tx = p
 /**
  * Record a payment received from a customer (decreases debt).
  * Payment must not exceed the current outstanding balance.
+ *
+ * For RETAIL customers with KHATA sales, the payment is allocated using FIFO
+ * (oldest unpaid sale first). Each allocation increases the sale's
+ * recognizedAmount (revenue recognized) proportionally.
+ *
+ * For BUSINESS/PERSONAL customers, no sale allocation occurs — manual debt
+ * collections never affect product revenue, COGS, or profit.
  */
 export async function recordPayment(customerId, amount, description, tx = prisma) {
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -55,9 +62,52 @@ export async function recordPayment(customerId, amount, description, tx = prisma
     if (amount > balance) {
       throw httpError(400, "Payment cannot exceed the customer's outstanding balance.");
     }
+
     const transaction = await txClient.khataTransaction.create({
       data: { customerId, type: 'PAYMENT', amount, description },
     });
+
+    // For RETAIL customers, allocate the payment to unpaid KHATA sales using FIFO.
+    // Each allocation increases the sale's recognizedAmount (revenue recognized).
+    // For BUSINESS/PERSONAL customers, no sale allocation — manual debt
+    // collections never affect product revenue, COGS, or profit.
+    if (customer.type === 'RETAIL') {
+      let remaining = amount;
+      // Fetch unpaid KHATA sales for this customer, oldest first.
+      // A sale is "unpaid" when recognizedAmount < total.
+      const unpaidSales = await txClient.sale.findMany({
+        where: {
+          customerId,
+          paymentMethod: 'KHATA',
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      // Filter in JS since Prisma doesn't support field-on-field comparison easily.
+      const trulyUnpaid = unpaidSales.filter((s) => Number(s.recognizedAmount || 0) < Number(s.total));
+      for (const sale of trulyUnpaid) {
+        if (remaining <= 0) break;
+        const saleTotal = Number(sale.total);
+        const recognized = Number(sale.recognizedAmount || 0);
+        const unpaidAmount = saleTotal - recognized;
+        const allocate = Math.min(remaining, unpaidAmount);
+        if (allocate <= 0) continue;
+
+        const newRecognized = recognized + allocate;
+        await txClient.sale.update({
+          where: { id: sale.id },
+          data: { recognizedAmount: newRecognized },
+        });
+        await txClient.paymentAllocation.create({
+          data: {
+            paymentId: transaction.id,
+            saleId: sale.id,
+            amount: allocate,
+          },
+        });
+        remaining -= allocate;
+      }
+    }
+
     const updated = await txClient.customer.update({
       where: { id: customerId },
       data: { balance: { decrement: amount } },

@@ -123,13 +123,11 @@ function AppRouter() {
         <Route index element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
         <Route path="products" element={<Products />} />
+        <Route path="customers" element={<Customers />} />
+        <Route path="customers/outstanding" element={<OutstandingCustomers />} />
+        <Route path="customers/:id" element={<CustomerLedger />} />
         <Route path="expenses" element={<Expenses />} />
         <Route path="reports" element={<Reports />} />
-        <Route path="customers" element={<Customers />}>
-          <Route index element={<Customers />} />
-          <Route path="outstanding" element={<OutstandingCustomers />} />
-          <Route path=":id" element={<CustomerLedger />} />
-        </Route>
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

@@ -155,6 +155,9 @@ export async function createSale(userId, data) {
           subtotal: Number(subtotal.toFixed(2)),
           discount: discountValue,
           total: totalValue,
+          // Recognized revenue: immediate for non-KHATA (paid at sale time),
+          // deferred for KHATA (recognized as payments are collected).
+          recognizedAmount: paymentMethod === 'KHATA' ? 0 : totalValue,
           paymentMethod,
           customerId: paymentMethod === 'KHATA' ? customerId : undefined,
           createdAt: new Date(),

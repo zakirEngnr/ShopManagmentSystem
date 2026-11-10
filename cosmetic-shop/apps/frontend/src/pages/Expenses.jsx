@@ -15,13 +15,13 @@ import { createExpense, deleteExpense, fetchExpenses } from '../api/expenses';
 const EXPENSE_CATEGORIES = ['RENT', 'SALARIES', 'UTILITIES', 'PACKAGING', 'TRANSPORT', 'MARKETING', 'OTHER'];
 
 const CATEGORY_STYLES = {
-  RENT: 'bg-rose-100 text-rose-700 border border-rose-200',
-  SALARIES: 'bg-indigo-100 text-indigo-700 border border-indigo-200',
-  UTILITIES: 'bg-amber-100 text-amber-700 border border-amber-200',
-  PACKAGING: 'bg-violet-100 text-violet-700 border border-violet-200',
-  TRANSPORT: 'bg-sky-100 text-sky-700 border border-sky-200',
-  MARKETING: 'bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200',
-  OTHER: 'bg-slate-100 text-slate-700 border border-slate-200',
+  RENT: 'bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800',
+  SALARIES: 'bg-indigo-100 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800',
+  UTILITIES: 'bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800',
+  PACKAGING: 'bg-violet-100 text-violet-700 border border-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800',
+  TRANSPORT: 'bg-sky-100 text-sky-700 border border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800',
+  MARKETING: 'bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-400 dark:border-fuchsia-800',
+  OTHER: 'bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
 };
 
 const getDateInputValue = (date = new Date()) => {
@@ -222,8 +222,6 @@ export default function Expenses() {
     } else if (!EXPENSE_CATEGORIES.includes(values.category)) {
       nextErrors.category = 'Choose a valid category.';
     }
-
-    // expenseName is optional — allow free-text named expense head or payee
 
     if (!values.description || !String(values.description).trim()) {
       nextErrors.description = 'Description is required.';
@@ -445,7 +443,7 @@ export default function Expenses() {
         {renderSummaryCard({
           label: 'Total Expenses — This Month',
           value: totalSummary.month,
-          color: 'text-amber-700',
+          color: 'text-amber-700 dark:text-amber-500',
           bg: 'bg-amber-100',
           Icon: CalendarClock,
         })}
@@ -453,7 +451,7 @@ export default function Expenses() {
         {renderSummaryCard({
           label: 'Total Expenses — Today',
           value: totalSummary.today,
-          color: 'text-red-700',
+          color: 'text-red-700 dark:text-red-500',
           bg: 'bg-red-100',
           Icon: DollarSign,
         })}
@@ -478,7 +476,7 @@ export default function Expenses() {
                 <div>
                   <p className="text-sm font-medium text-[var(--app-text)]">{head.expenseName}</p>
                 </div>
-                <div className="text-sm font-bold text-red-600">
+                <div className="text-sm font-bold text-red-600 dark:text-red-400">
                   {formatCurrency(head.total)}
                 </div>
               </div>

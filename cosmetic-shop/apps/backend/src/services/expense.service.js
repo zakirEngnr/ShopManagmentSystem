@@ -62,7 +62,8 @@ export async function listExpenses(query = {}) {
   if (query.expenseName) {
     const expenseName = String(query.expenseName).trim();
     if (expenseName) {
-      where.expenseName = expenseName;
+      // Case-insensitive search
+      where.expenseName = { contains: expenseName };
     }
   }
 
@@ -97,20 +98,27 @@ export async function listExpenses(query = {}) {
     }),
   ]);
 
-  // Calculate cumulative totals grouped by expenseName for the filtered date range
-  const expenseNameAgg = await prisma.expense.groupBy({
-    by: ['expenseName'],
-    where,
-    _sum: { amount: true },
-    orderBy: {
-      _sum: { amount: 'desc' },
-    },
+  // Fetch all matching expenses for the date range (ignoring pagination)
+  // and group them manually in JS to avoid Prisma SQLite bugs and case-sensitivity issues.
+  const groupWhere = { ...where };
+  delete groupWhere.expenseName;
+  
+  const allFilteredExpenses = await prisma.expense.findMany({
+    where: groupWhere,
+    select: { expenseName: true, amount: true }
   });
 
-  const cumulativeTotals = expenseNameAgg.map((row) => ({
-    expenseName: row.expenseName || 'Uncategorized',
-    total: toMoney(row._sum.amount ?? 0),
-  }));
+  const totalsMap = new Map();
+  for (const exp of allFilteredExpenses) {
+    const nameKey = exp.expenseName ? exp.expenseName.toLowerCase() : 'uncategorized';
+    const current = totalsMap.get(nameKey) || { displayName: exp.expenseName || 'Uncategorized', total: 0 };
+    current.total += Number(exp.amount || 0);
+    totalsMap.set(nameKey, current);
+  }
+
+  const cumulativeTotals = Array.from(totalsMap.values())
+    .map((row) => ({ expenseName: row.displayName, total: toMoney(row.total) }))
+    .sort((a, b) => b.total - a.total);
 
   return {
     items,
