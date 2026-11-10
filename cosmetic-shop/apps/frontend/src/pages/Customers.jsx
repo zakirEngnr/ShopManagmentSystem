@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Edit,
   User,
+  Menu,
+  ChevronDown,
 } from 'lucide-react';
 import {
   createCustomer,
@@ -47,7 +49,20 @@ const getEmptyForm = () => ({
   email: '',
   address: '',
   notes: '',
+  type: 'RETAIL',
 });
+
+const CUSTOMER_TYPE_LABELS = {
+  RETAIL: 'Retail Customer',
+  BUSINESS: 'Business',
+  PERSONAL: 'Personal',
+};
+
+const TYPE_BADGE_STYLE = {
+  RETAIL: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-100 dark:border-blue-800',
+  BUSINESS: 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border border-purple-100 dark:border-purple-800',
+  PERSONAL: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800',
+};
 
 export default function Customers() {
   const [customers, setCustomers] = useState([]);
@@ -56,6 +71,7 @@ export default function Customers() {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
+  const [customerTab, setCustomerTab] = useState('retail'); // 'retail' | 'business-personal'
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimerRef = useRef(null);
   const requestSeqRef = useRef(0);
@@ -71,6 +87,10 @@ export default function Customers() {
   const [deleting, setDeleting] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
 
+  const tabType = useMemo(() => {
+    return customerTab === 'retail' ? 'RETAIL' : undefined;
+  }, [customerTab]);
+
   const fetchCustomersPage = useCallback(
     async (search, isRefresh = false) => {
       const requestSeq = ++requestSeqRef.current;
@@ -79,7 +99,7 @@ export default function Customers() {
       setError(null);
 
       try {
-        const data = await fetchCustomers();
+        const data = await fetchCustomers({ type: tabType });
         if (requestSeq !== requestSeqRef.current) return;
 
         const list = Array.isArray(data) ? data : [];
@@ -106,7 +126,7 @@ export default function Customers() {
         }
       }
     },
-    []
+    [tabType]
   );
 
   useEffect(() => {
@@ -175,6 +195,8 @@ export default function Customers() {
       errors.address = 'Address must be at most 500 characters.';
     if (form.notes && form.notes.trim().length > 1000)
       errors.notes = 'Notes must be at most 1000 characters.';
+    if (!form.type || !['RETAIL', 'BUSINESS', 'PERSONAL'].includes(form.type))
+      errors.type = 'Invalid customer type.';
     return errors;
   };
 
@@ -195,6 +217,7 @@ export default function Customers() {
       email: form.email.trim() || null,
       address: form.address.trim() || null,
       notes: form.notes.trim() || null,
+      type: form.type,
     };
 
     try {
@@ -250,6 +273,7 @@ export default function Customers() {
       email: customer.email ?? '',
       address: customer.address ?? '',
       notes: customer.notes ?? '',
+      type: customer.type ?? 'RETAIL',
     });
     setFormErrors({});
     setSubmitError(null);
@@ -329,6 +353,31 @@ export default function Customers() {
           </button>
         </div>
       )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setCustomerTab('retail')}
+          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+            customerTab === 'retail'
+              ? 'bg-[var(--app-accent)] text-white shadow-lg'
+              : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
+          }`}
+        >
+          Retail Customers
+        </button>
+        <button
+          type="button"
+          onClick={() => setCustomerTab('business-personal')}
+          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+            customerTab === 'business-personal'
+              ? 'bg-[var(--app-accent)] text-white shadow-lg'
+              : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
+          }`}
+        >
+          Business / Personal
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] p-5">
@@ -467,6 +516,13 @@ export default function Customers() {
                   </div>
                 </td>
                 <td className="px-5 py-4">
+                  <span
+                    className={`text-xs font-bold px-2 py-1 rounded-full border ${TYPE_BADGE_STYLE[customer.type ?? 'RETAIL']}`}
+                  >
+                    {customer.type === 'RETAIL' ? 'Retail' : customer.type === 'BUSINESS' ? 'Business' : 'Personal'}
+                  </span>
+                </td>
+                <td className="px-5 py-4">
                   <p className="text-sm text-[var(--app-text)]">
                     {customer.phone || '-'}
                   </p>
@@ -552,6 +608,28 @@ export default function Customers() {
                 {formErrors.name && (
                   <p className="mt-1 text-xs font-medium text-red-600">
                     {formErrors.name}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">
+                  Customer Type
+                </label>
+                <select
+                  value={form.type}
+                  onChange={(e) =>
+                    setForm({ ...form, type: e.target.value })
+                  }
+                  className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
+                >
+                  <option value="RETAIL">Retail Customer</option>
+                  <option value="BUSINESS">Business</option>
+                  <option value="PERSONAL">Personal</option>
+                </select>
+                {formErrors.type && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {formErrors.type}
                   </p>
                 )}
               </div>

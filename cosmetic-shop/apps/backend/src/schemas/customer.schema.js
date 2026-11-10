@@ -19,6 +19,7 @@ export const createCustomerSchema = z
     email: z.string().trim().email({ message: 'Invalid email' }).nullish(),
     address: z.string().trim().max(500).nullish(),
     notes: z.string().trim().max(1000).nullish(),
+    type: z.enum(['RETAIL', 'BUSINESS', 'PERSONAL']).default('RETAIL'),
   })
   .strict();
 
@@ -29,6 +30,7 @@ export const updateCustomerSchema = z
     email: z.string().trim().email({ message: 'Invalid email' }).nullish(),
     address: z.string().trim().max(500).nullish(),
     notes: z.string().trim().max(1000).nullish(),
+    type: z.enum(['RETAIL', 'BUSINESS', 'PERSONAL']).optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length >= 1, {
@@ -39,6 +41,12 @@ export const recordPaymentSchema = z
   .object({
     amount: z.number().finite().gt(0).max(1e9),
     description: z.string().trim().max(500).nullish(),
+  })
+  .strict();
+
+export const customerListQuerySchema = z
+  .object({
+    type: z.enum(['RETAIL', 'BUSINESS', 'PERSONAL']).optional(),
   })
   .strict();
 
@@ -53,5 +61,6 @@ export default {
   createCustomerSchema,
   updateCustomerSchema,
   recordPaymentSchema,
+  customerListQuerySchema,
   ledgerQuerySchema,
 };

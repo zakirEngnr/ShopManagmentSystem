@@ -73,6 +73,7 @@ export default function POS() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [customerGroup, setCustomerGroup] = useState('retail'); // 'retail' | 'business-personal'
   const [customers, setCustomers] = useState([]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerLoading, setCustomerLoading] = useState(false);
@@ -137,7 +138,8 @@ export default function POS() {
     const loadCustomers = async () => {
       setCustomerLoading(true);
       try {
-        const data = await fetchCustomers();
+        const customerType = customerGroup === 'retail' ? 'RETAIL' : undefined;
+        const data = await fetchCustomers({ type: customerType });
         if (!cancelled) setCustomers(Array.isArray(data) ? data : []);
       } catch {
         if (!cancelled) setCustomers([]);
@@ -149,7 +151,7 @@ export default function POS() {
     return () => {
       cancelled = true;
     };
-  }, [paymentMethod]);
+  }, [paymentMethod, customerGroup]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;
@@ -651,6 +653,31 @@ export default function POS() {
                     )}
                   </div>
 
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setCustomerGroup('retail'); if (!selectedCustomer || selectedCustomer.type !== 'RETAIL') setSelectedCustomer(null); }}
+                      className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
+                        customerGroup === 'retail'
+                          ? 'bg-[var(--app-accent)] text-white shadow-lg'
+                          : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
+                      }`}
+                    >
+                      Retail Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCustomerGroup('business-personal'); if (!selectedCustomer || (selectedCustomer.type !== 'BUSINESS' && selectedCustomer.type !== 'PERSONAL')) setSelectedCustomer(null); }}
+                      className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
+                        customerGroup === 'business-personal'
+                          ? 'bg-[var(--app-accent)] text-white shadow-lg'
+                          : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
+                      }`}
+                    >
+                      Business / Personal
+                    </button>
+                  </div>
+
                   {selectedCustomer ? (
                     <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-2)]/50">
                       <div>
@@ -699,8 +726,19 @@ export default function POS() {
                                     </span>
                                     <br />
                                     <span className="text-xs text-[var(--app-muted)]">
-                                      {c.phone || 'No phone'}
+                                      {c.type === 'RETAIL' ? 'Retail' : c.type === 'BUSINESS' ? 'Business' : 'Personal'} · {c.phone || 'No phone'}
                                     </span>
+                                  </span>
+                                  <span
+                                    className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                                      c.type === 'RETAIL'
+                                        ? 'bg-blue-50 text-blue-700 border-blue-100'
+                                        : c.type === 'BUSINESS'
+                                        ? 'bg-purple-50 text-purple-700 border-purple-100'
+                                        : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                    }`}
+                                  >
+                                    {c.type === 'RETAIL' ? 'Retail' : c.type === 'BUSINESS' ? 'Business' : 'Personal'}
                                   </span>
                                   <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
                                     {formatCurrency(c.balance)}
