@@ -22,11 +22,13 @@ function normalizeExpenseListResponse(data) {
   };
 }
 
-export async function fetchExpenses(page = 1, limit = 20) {
+export async function fetchExpenses(page = 1, limit = 20, filters = {}) {
   const safePage = Number.isInteger(page) ? page : Number(page) || 1;
   const safeLimit = Number.isInteger(limit) ? limit : Number(limit) || 20;
 
-  const res = await client.get('/expenses', { params: { page: safePage, limit: safeLimit } });
+  const params = { page: safePage, limit: safeLimit, ...filters };
+
+  const res = await client.get('/expenses', { params });
   const data = normalizeExpenseListResponse(res.data);
 
   if (data.page < 1 || data.limit < 1 || data.page > data.totalPages) {
@@ -40,6 +42,7 @@ export async function createExpense(data) {
   const payload = {
     date: data.date,
     category: data.category,
+    expenseName: data.expenseName?.trim() || null,
     description: String(data.description ?? '').trim(),
     amount: Number(data.amount),
   };
