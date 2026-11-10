@@ -558,8 +558,8 @@ export default function CustomerLedger() {
             </div>
             <p className="text-sm text-[var(--app-muted)] mb-4">
               Record a payment received from <strong>{customer.name}</strong>.
-              A payment larger than the outstanding balance creates advance
-              credit (negative balance).
+              The payment cannot exceed the outstanding balance of{' '}
+              {formatCurrency(Number(customer.balance ?? 0))}.
             </p>
 
             <form onSubmit={handlePaymentSubmit} className="space-y-4">
@@ -570,6 +570,7 @@ export default function CustomerLedger() {
                 <input
                   type="number"
                   min="0"
+                  max={Number(customer.balance ?? 0)}
                   step="0.01"
                   value={paymentForm.amount}
                   onChange={(e) =>
