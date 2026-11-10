@@ -14,5 +14,6 @@ router.patch('/:id', requireAuth, customerController.update);
 router.delete('/:id', requireAuth, customerController.remove);
 router.get('/:id/ledger', requireAuth, khataController.ledger);
 router.post('/:id/payment', requireAuth, khataController.payment);
+router.post('/:id/debt', requireAuth, khataController.debt);
 
 export default router;

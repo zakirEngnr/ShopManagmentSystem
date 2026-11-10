@@ -44,6 +44,13 @@ export const recordPaymentSchema = z
   })
   .strict();
 
+export const recordDebtSchema = z
+  .object({
+    amount: z.number().finite().gt(0).max(1e9),
+    description: z.string().trim().min(1, { message: 'Required' }).max(500),
+  })
+  .strict();
+
 export const customerListQuerySchema = z
   .object({
     type: z.enum(['RETAIL', 'BUSINESS', 'PERSONAL']).optional(),
@@ -61,6 +68,7 @@ export default {
   createCustomerSchema,
   updateCustomerSchema,
   recordPaymentSchema,
+  recordDebtSchema,
   customerListQuerySchema,
   ledgerQuerySchema,
 };

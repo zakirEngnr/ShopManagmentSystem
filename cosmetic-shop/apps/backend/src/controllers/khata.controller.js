@@ -1,5 +1,5 @@
 import { parse, parseId } from '../middleware/validate.js';
-import { recordPaymentSchema, ledgerQuerySchema } from '../schemas/customer.schema.js';
+import { recordPaymentSchema, recordDebtSchema, ledgerQuerySchema } from '../schemas/customer.schema.js';
 import * as khataService from '../services/khata.service.js';
 
 export async function ledger(req, res, next) {
@@ -24,6 +24,17 @@ export async function payment(req, res, next) {
   }
 }
 
+export async function debt(req, res, next) {
+  try {
+    const customerId = parseId(req.params);
+    const { amount, description } = parse(recordDebtSchema, req.body);
+    const result = await khataService.recordDebt(customerId, amount, description);
+    res.status(201).json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function outstanding(req, res, next) {
   try {
     const result = await khataService.getOutstanding();
@@ -33,4 +44,4 @@ export async function outstanding(req, res, next) {
   }
 }
 
-export default { ledger, payment, outstanding };
+export default { ledger, payment, debt, outstanding };
