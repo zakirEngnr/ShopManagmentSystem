@@ -53,7 +53,7 @@ export async function recordPayment(customerId, amount, description, tx = prisma
       throw httpError(400, 'No outstanding balance to pay');
     }
     if (amount > balance) {
-      throw httpError(400, 'Payment exceeds outstanding balance');
+      throw httpError(400, "Payment cannot exceed the customer's outstanding balance.");
     }
     const transaction = await txClient.khataTransaction.create({
       data: { customerId, type: 'PAYMENT', amount, description },
