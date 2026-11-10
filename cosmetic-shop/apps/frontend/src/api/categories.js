@@ -19,3 +19,13 @@ export async function fetchCategories() {
 
   return res.data.categories;
 }
+
+export async function createCategory(data) {
+  const res = await client.post('/categories', data);
+
+  if (!res.data || typeof res.data !== 'object' || !res.data.category || typeof res.data.category !== 'object') {
+    throw new Error('Invalid category create response from server.');
+  }
+
+  return res.data.category;
+}

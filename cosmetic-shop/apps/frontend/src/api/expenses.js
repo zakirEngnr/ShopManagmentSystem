@@ -19,6 +19,8 @@ function normalizeExpenseListResponse(data) {
     page: data.page,
     limit: data.limit,
     totalPages: Math.max(1, totalPages),
+    // FIX: Pass the cumulativeTotals array through to the UI
+    cumulativeTotals: Array.isArray(data.cumulativeTotals) ? data.cumulativeTotals : [],
   };
 }
 
