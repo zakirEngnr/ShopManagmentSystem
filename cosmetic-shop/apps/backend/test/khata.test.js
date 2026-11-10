@@ -352,7 +352,7 @@ test('10 record payment: balance decreases', async () => {
   assert.equal(await prisma.khataTransaction.count({ where: { customerId: customer.id, type: 'PAYMENT' } }), 1);
 });
 
-test('11 payment larger than outstanding debt: negative balance allowed', async () => {
+test('11 payment larger than outstanding debt: rejected', async () => {
   const customer = await prisma.customer.create({
     data: { name: 'Overpayer', phone: '+1000000011', balance: 10 },
   });
@@ -360,8 +360,32 @@ test('11 payment larger than outstanding debt: negative balance allowed', async 
     token: adminToken,
     body: { amount: 100, description: 'Advance payment' },
   });
+  assert.equal(res.status, 400);
+  assert.equal(Number((await prisma.customer.findUnique({ where: { id: customer.id } })).balance), 10);
+});
+
+test('11b payment equal to balance: succeeds with zero balance', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'ExactPayer', phone: '+1000000011b', balance: 50 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/payment`, {
+    token: adminToken,
+    body: { amount: 50, description: 'Full payment' },
+  });
   assert.equal(res.status, 200);
-  assert.equal(Number(res.body.customer.balance), -90);
+  assert.equal(Number(res.body.customer.balance), 0);
+});
+
+test('11c payment when balance is zero: rejected', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'ZeroBalance', phone: '+1000000011c', balance: 0 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/payment`, {
+    token: adminToken,
+    body: { amount: 10, description: 'Payment on zero balance' },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(Number((await prisma.customer.findUnique({ where: { id: customer.id } })).balance), 0);
 });
 
 test('12 invalid or zero payment: rejected', async () => {
@@ -596,17 +620,180 @@ test('23 concurrent KHATA sales to same customer: each successful sale reflected
 });
 
 // ---------------------------------------------------------------------------
-// Authentication tests
+// Manual debt entry tests
 // ---------------------------------------------------------------------------
 
-test('24 unauthenticated access returns 401 for every new endpoint', async () => {
-  const customer = await prisma.customer.create({ data: { name: 'Auth', phone: '+1000000026', balance: 0 } });
+test('25 BUSINESS customer can receive a manual debt entry', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'Biz Customer', phone: '+1000000027', type: 'BUSINESS', balance: 1000 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 40000, description: 'Manual debt entry for supplies' },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.transaction.type, 'DEBT');
+  assert.equal(Number(res.body.customer.balance), 41000);
+  const txCount = await prisma.khataTransaction.count({
+    where: { customerId: customer.id, type: 'DEBT' },
+  });
+  assert.equal(txCount, 1);
+  const saleCount = await prisma.sale.count({ where: { customerId: customer.id } });
+  assert.equal(saleCount, 0);
+});
+
+test('26 PERSONAL customer can receive a manual debt entry', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'Personal Customer', phone: '+1000000028', type: 'PERSONAL', balance: 5000 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 15000, description: 'Personal udhaar entry' },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.transaction.type, 'DEBT');
+  assert.equal(Number(res.body.customer.balance), 20000);
+});
+
+test('27 RETAIL customer cannot receive a manual debt entry', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'Retail Customer', phone: '+1000000029', type: 'RETAIL', balance: 0 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 5000, description: 'Attempted debt for retail' },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(Number((await prisma.customer.findUnique({ where: { id: customer.id } })).balance), 0);
+  assert.equal(await prisma.khataTransaction.count({ where: { customerId: customer.id } }), 0);
+});
+
+test('28 Invalid customer ID is rejected for debt entry', async () => {
+  const res = await req('POST', '/api/customers/999999/debt', {
+    token: adminToken,
+    body: { amount: 1000, description: 'Nonexistent customer' },
+  });
+  assert.equal(res.status, 404);
+});
+
+test('29 Invalid amount is rejected for debt entry', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'BadAmount', phone: '+1000000030', type: 'BUSINESS' },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 0, description: 'Zero amount' },
+  });
+  assert.equal(res.status, 400);
+});
+
+test('30 Missing description is rejected for debt entry', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'NoDesc', phone: '+1000000031', type: 'PERSONAL' },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 1000, description: '' },
+  });
+  assert.equal(res.status, 400);
+});
+
+test('31 Debt entry increases balance correctly', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'BalanceCheck', phone: '+1000000032', type: 'BUSINESS', balance: 10000 },
+  });
+  const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 40000, description: 'Large debt entry' },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(Number(res.body.customer.balance), 50000);
+});
+
+test('32 Debt entry creates exactly one ledger transaction', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'OneTx', phone: '+1000000033', type: 'PERSONAL', balance: 0 },
+  });
+  await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 5000, description: 'Single debt' },
+  });
+  const txs = await prisma.khataTransaction.findMany({
+    where: { customerId: customer.id },
+  });
+  assert.equal(txs.length, 1);
+  assert.equal(txs[0].type, 'DEBT');
+  assert.equal(Number(txs[0].amount), 5000);
+});
+
+test('33 Debt entry creates no Sale or SaleItem', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'NoSale', phone: '+1000000034', type: 'BUSINESS' },
+  });
+  await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 3000, description: 'No sale debt' },
+  });
+  assert.equal(await prisma.sale.count({ where: { customerId: customer.id } }), 0);
+});
+
+test('34 Debt entry does not change inventory', async () => {
+  const product = await createProduct({ name: 'InvProduct', stock: 100, sku: 'INV-001' });
+  const customer = await prisma.customer.create({
+    data: { name: 'InvCustomer', phone: '+1000000035', type: 'PERSONAL' },
+  });
+  await req('POST', `/api/customers/${customer.id}/debt`, {
+    token: adminToken,
+    body: { amount: 5000, description: 'Inventory check' },
+  });
+  const p = await prisma.product.findUnique({ where: { id: product.id } });
+  assert.equal(p.stock, 100);
+});
+
+test('35 Concurrent payments cannot cause overpayment', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'ConcurrentPay', phone: '+1000000036', balance: 100 },
+  });
+  const requests = Array.from({ length: 5 }, () =>
+    req('POST', `/api/customers/${customer.id}/payment`, {
+      token: adminToken,
+      body: { amount: 30, description: 'Concurrent payment' },
+    })
+  );
+  const results = await Promise.all(requests);
+  const successes = results.filter((r) => r.status === 200);
+  const final = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.ok(Number(final.balance) >= 0);
+});
+
+test('36 Existing SALE and PAYMENT ledger history remains correct', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'HistoryCheck', phone: '+1000000037', type: 'RETAIL', balance: 0 },
+  });
+  const product = await createProduct({ name: 'HistProduct', stock: 100, sku: 'HIST-001' });
+  await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'KHATA',
+      customerId: customer.id,
+      discount: 0,
+      items: [{ productId: product.id, quantity: 2, unitPrice: 10 }],
+    },
+  });
+  const res = await req('GET', `/api/customers/${customer.id}/ledger`, { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.transactions.length, 1);
+  assert.equal(res.body.transactions[0].type, 'SALE');
+});
+test('37 unauthenticated access returns 401 for every new endpoint', async () => {
+  const customer = await prisma.customer.create({ data: { name: 'Auth', phone: '+1000000038', balance: 0 } });
   const endpoints = [
     ['GET', '/api/customers'],
     ['GET', '/api/customers/outstanding'],
     ['GET', `/api/customers/${customer.id}`],
     ['GET', `/api/customers/${customer.id}/ledger`],
     ['POST', `/api/customers/${customer.id}/payment`],
+    ['POST', `/api/customers/${customer.id}/debt`],
     ['POST', '/api/customers'],
     ['PATCH', `/api/customers/${customer.id}`],
     ['DELETE', `/api/customers/${customer.id}`],

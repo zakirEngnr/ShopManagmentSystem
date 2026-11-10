@@ -14,8 +14,9 @@ import client from './client';
  *   DELETE /api/customers/:id          -> { ok: true }  (409 if ledger history exists)
  *   GET    /api/customers/:id/ledger   -> { ok: true, transactions: KhataTransaction[], total, page, limit, totalPages }
  *   POST   /api/customers/:id/payment  -> { ok: true, transaction, customer }
+ *   POST   /api/customers/:id/debt     -> { ok: true, transaction, customer }
  *
- * Customer: { id, name, phone, email, address, notes, balance, createdAt, updatedAt }
+ * Customer: { id, name, phone, email, address, notes, balance, type, createdAt, updatedAt }
  * KhataTransaction: { id, customerId, type, amount, description, saleId, createdAt }
  */
 
@@ -179,6 +180,32 @@ export async function recordCustomerPayment(id, data) {
     !res.data.customer
   ) {
     throw new Error('Invalid payment response from server.');
+  }
+
+  return res.data;
+}
+
+/**
+ * Record a manual debt entry for a BUSINESS or PERSONAL customer.
+ * @param {number|string} id - customer id
+ * @param {object} data - { amount, description }
+ * @returns { transaction, customer }
+ */
+export async function recordCustomerDebt(id, data) {
+  if (id == null) throw new Error('Customer id is required to record a debt entry.');
+
+  const res = await client.post(`/customers/${id}/debt`, {
+    amount: Number(data.amount),
+    description: data.description,
+  });
+
+  if (
+    !res.data ||
+    typeof res.data !== 'object' ||
+    !res.data.transaction ||
+    !res.data.customer
+  ) {
+    throw new Error('Invalid debt entry response from server.');
   }
 
   return res.data;
