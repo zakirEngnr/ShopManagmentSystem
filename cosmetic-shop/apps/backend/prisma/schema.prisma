@@ -60,6 +60,7 @@ model Product {
   category     Category      @relation(fields: [categoryId], references: [id])
   brand        Brand?        @relation(fields: [brandId], references: [id], onDelete: Restrict)
   saleItems    SaleItem[]
+  purchaseItems PurchaseItem[]
   stockAdjusts StockAdjust[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -67,6 +68,76 @@ model Product {
   @@index([name])
   @@index([barcode])
   @@index([type])
+}
+
+model Supplier {
+  id        Int                 @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  balance   Float               @default(0)
+  purchases Purchase[]
+  payments  SupplierPayment[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([name])
+}
+
+model Purchase {
+  id          Int                         @id @default(autoincrement())
+  supplierId  Int
+  totalAmount Float
+  paidAmount  Float                       @default(0)
+  status      String                      @default("UNPAID")
+  supplier    Supplier                    @relation(fields: [supplierId], references: [id])
+  items       PurchaseItem[]
+  allocations SupplierPaymentAllocation[]
+  createdAt   DateTime                    @default(now())
+
+  @@index([supplierId])
+  @@index([createdAt])
+}
+
+model PurchaseItem {
+  id         Int      @id @default(autoincrement())
+  purchaseId Int
+  productId  Int
+  quantity   Int
+  unitCost   Float
+  total      Float
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+model SupplierPayment {
+  id          Int                       @id @default(autoincrement())
+  supplierId  Int
+  amount      Float
+  description String?
+  supplier    Supplier                  @relation(fields: [supplierId], references: [id])
+  allocations SupplierPaymentAllocation[]
+  createdAt   DateTime                  @default(now())
+
+  @@index([supplierId])
+  @@index([createdAt])
+}
+
+model SupplierPaymentAllocation {
+  id                Int             @id @default(autoincrement())
+  supplierPaymentId Int
+  purchaseId        Int
+  amount            Float
+  supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+  purchase          Purchase        @relation(fields: [purchaseId], references: [id])
+
+  @@index([supplierPaymentId])
+  @@index([purchaseId])
 }
 
 model Sale {

@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 function abortIfNotTmpDb(url, realTmp) {
   const resolved = path.resolve(String(url).replace(/^file:/, ''));
@@ -89,13 +90,6 @@ export async function createTempDb({ prefix, backendDir }) {
   };
 
   try {
-    const migrationsDir = path.join(backendDir, 'prisma', 'migrations');
-    const entries = fs
-      .readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-    assert.ok(entries.length > 0, 'no migration folders found under prisma/migrations');
     const { prisma } = await import(
       (await import('node:url')).pathToFileURL(path.join(backendDir, 'src', 'db', 'prisma.js')).href
     );
@@ -103,18 +97,25 @@ export async function createTempDb({ prefix, backendDir }) {
       throw new Error('refusing to run: DATABASE_URL was changed during prisma import');
     }
     assert.equal(process.env.DATABASE_URL, dbUrl);
-    for (const folder of entries) {
-      const sqlPath = path.join(migrationsDir, folder, 'migration.sql');
-      const sql = fs.readFileSync(sqlPath, 'utf8');
-      const stmts = splitStatements(sql);
-      assert.ok(stmts.length > 0, `migration.sql must not be empty: ${folder}`);
-      for (const s of stmts) {
-        assert.ok(isAllowedMigrationStatement(s), 'unexpected statement: ' + s.slice(0, 60));
-      }
-      for (const s of stmts) {
-        await prisma.$executeRawUnsafe(s + ';');
-      }
-    }
+
+    const prismaBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    execFileSync(
+      prismaBin,
+      [
+        'prisma',
+        'db',
+        'push',
+        '--schema',
+        path.join(backendDir, 'prisma', 'schema.prisma'),
+      ],
+      {
+        cwd: backendDir,
+        env: { ...process.env, DATABASE_URL: dbUrl, UPLOAD_DIR: uploadDir },
+        stdio: 'inherit',
+      },
+    );
+
+    await prisma.$queryRaw`SELECT 1`;
     return { tmpDir, dbFile, dbUrl, realTmp, cleanup, uploadDir };
   } catch (err) {
     cleanup();
