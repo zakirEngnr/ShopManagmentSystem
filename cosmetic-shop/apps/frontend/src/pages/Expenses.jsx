@@ -77,13 +77,15 @@ const getUtcMonthKey = (date) => {
 
 const getEmptyForm = () => ({
   date: getDateInputValue(new Date()),
-  category: 'RENT',
+  category: 'OTHER',
+  expenseName: '',
   description: '',
   amount: '',
 });
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState([]);
+  const [cumulativeTotals, setCumulativeTotals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -96,6 +98,11 @@ export default function Expenses() {
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [deletingExpenseId, setDeletingExpenseId] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+
+  // Filter state
+  const [filterExpenseName, setFilterExpenseName] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
 
   const requestIdRef = useRef(0);
   const busyRef = useRef(false);
@@ -119,13 +126,22 @@ export default function Expenses() {
       let page = 1;
       let totalPages = 1;
       const allExpenses = [];
+      let fetchedCumulativeTotals = [];
 
       while (page <= totalPages) {
-        const response = await fetchExpenses(page, 100);
+        const response = await fetchExpenses(page, 100, {
+          expenseName: filterExpenseName || undefined,
+          from: filterFrom || undefined,
+          to: filterTo || undefined,
+        });
         if (!isCurrent()) return;
 
         if (Array.isArray(response.items)) {
           allExpenses.push(...response.items);
+        }
+
+        if (Array.isArray(response.cumulativeTotals)) {
+          fetchedCumulativeTotals = response.cumulativeTotals;
         }
 
         if (!Number.isInteger(response.totalPages) || response.totalPages < 1) {
@@ -139,6 +155,7 @@ export default function Expenses() {
 
       if (!isCurrent()) return;
       setExpenses(allExpenses);
+      setCumulativeTotals(fetchedCumulativeTotals);
     } catch (error) {
       if (!isCurrent()) return;
       setLoadError(error?.response?.data?.message || error?.message || 'Failed to load expenses.');
@@ -149,7 +166,7 @@ export default function Expenses() {
         busyRef.current = false;
       }
     }
-  }, []);
+  }, [filterExpenseName, filterFrom, filterTo]);
 
   useEffect(() => {
     loadExpenses(false);
@@ -206,6 +223,8 @@ export default function Expenses() {
       nextErrors.category = 'Choose a valid category.';
     }
 
+    // expenseName is optional — allow free-text named expense head or payee
+
     if (!values.description || !String(values.description).trim()) {
       nextErrors.description = 'Description is required.';
     } else if (String(values.description).trim().length > 255) {
@@ -241,6 +260,7 @@ export default function Expenses() {
     const payload = {
       date: form.date,
       category: form.category,
+      expenseName: String(form.expenseName).trim() || undefined,
       description: String(form.description).trim(),
       amount: Number(form.amount),
     };
@@ -364,6 +384,55 @@ export default function Expenses() {
             Add Expense
           </button>
         </div>
+
+        <div className="mt-4 sm:mt-0 flex flex-col sm:flex-row gap-3 sm:items-center">
+          <div className="relative flex-1 sm:w-64">
+            <input
+              type="text"
+              value={filterExpenseName}
+              onChange={(event) => setFilterExpenseName(event.target.value)}
+              placeholder="Filter by expense name / payee"
+              className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
+            />
+          </div>
+          <div className="relative w-full sm:w-48">
+            <input
+              type="date"
+              value={filterFrom}
+              onChange={(event) => setFilterFrom(event.target.value)}
+              className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
+            />
+          </div>
+          <div className="relative w-full sm:w-48">
+            <input
+              type="date"
+              value={filterTo}
+              onChange={(event) => setFilterTo(event.target.value)}
+              className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => loadExpenses(true)}
+            className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-4 py-2.5 text-sm font-bold text-[var(--app-text)] transition hover:bg-[var(--app-panel)]"
+          >
+            Apply
+          </button>
+          {(filterExpenseName || filterFrom || filterTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setFilterExpenseName('');
+                setFilterFrom('');
+                setFilterTo('');
+                loadExpenses(true);
+              }}
+              className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-4 py-2.5 text-sm font-bold text-[var(--app-muted)] transition hover:bg-[var(--app-panel)]"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {successMessage && (
@@ -390,6 +459,34 @@ export default function Expenses() {
         })}
       </div>
 
+      {/* Cumulative totals by expense head */}
+      <div className="rounded-3xl border border-[var(--app-border)] bg-[var(--app-panel)] shadow-sm">
+        <div className="border-b border-[var(--app-border)] bg-[var(--app-panel-2)] px-5 py-4">
+          <h3 className="text-sm font-bold text-[var(--app-text)]">Cumulative Totals by Expense Head</h3>
+          <p className="mt-1 text-xs text-[var(--app-muted)]">
+            Totals are calculated by summing all individual expense records for each name/payee within the selected filters.
+          </p>
+        </div>
+        <div className="divide-y divide-[var(--app-border)]">
+          {cumulativeTotals.length === 0 ? (
+            <div className="px-5 py-8 text-center text-[var(--app-muted)]">
+              <p className="text-sm">No expense head totals available.</p>
+            </div>
+          ) : (
+            cumulativeTotals.map((head) => (
+              <div key={head.expenseName} className="px-5 py-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[var(--app-text)]">{head.expenseName}</p>
+                </div>
+                <div className="text-sm font-bold text-red-600">
+                  {formatCurrency(head.total)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {loadError && expenses.length > 0 && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
           {loadError}
@@ -409,7 +506,7 @@ export default function Expenses() {
             <table className="min-w-full divide-y divide-[var(--app-border)]">
               <thead className="bg-[var(--app-panel-2)]">
                 <tr>
-                  {['Date', 'Category', 'Description', 'Amount', 'Actions'].map((column) => (
+                  {['Date', 'Expense Name', 'Category', 'Description', 'Amount', 'Actions'].map((column) => (
                     <th
                       key={column}
                       className="px-5 py-3 text-left text-xs font-bold uppercase tracking-[0.12em] text-[var(--app-muted)]"
@@ -424,6 +521,9 @@ export default function Expenses() {
                   <tr key={expense.id} className="transition-colors hover:bg-[var(--app-panel-2)]">
                     <td className="px-5 py-4 text-sm font-medium text-[var(--app-text)]">
                       {formatExpenseDate(expense.date)}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-[var(--app-text-soft)]">
+                      {expense.expenseName || '-'}
                     </td>
                     <td className="px-5 py-4">
                       <span
@@ -489,23 +589,48 @@ export default function Expenses() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Category</label>
-                  <select
-                    value={form.category}
-                    onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
+                  <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Expense Name / Payee</label>
+                  <input
+                    type="text"
+                    value={form.expenseName}
+                    onChange={(event) => setForm((current) => ({ ...current, expenseName: event.target.value }))}
+                    placeholder="e.g. Lunch, Rent, Fazil"
                     className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
-                  >
-                    {EXPENSE_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
-                  {formErrors.category && <p className="mt-1 text-xs font-medium text-red-600">{formErrors.category}</p>}
+                  />
+                  <p className="mt-1 text-xs text-[var(--app-muted)]">Optional — group expenses by name/payee</p>
                 </div>
               </div>
 
               <div>
+                <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Category</label>
+                <select
+                  value={form.category}
+                  onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
+                  className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
+                >
+                  {EXPENSE_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Amount (PKR)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={form.amount}
+                    onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
+                    placeholder="0.00"
+                    className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
+                  />
+                  {formErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{formErrors.amount}</p>}
+                </div>
+
+                <div>
                 <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Description</label>
                 <input
                   type="text"
@@ -515,20 +640,6 @@ export default function Expenses() {
                   className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
                 />
                 {formErrors.description && <p className="mt-1 text-xs font-medium text-red-600">{formErrors.description}</p>}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-[var(--app-text-soft)]">Amount (PKR)</label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
-                  placeholder="0.00"
-                  className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2.5 text-sm text-[var(--app-text)] outline-none transition focus:border-indigo-500"
-                />
-                {formErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{formErrors.amount}</p>}
               </div>
 
               {submitError && (

@@ -11,7 +11,8 @@ const isoDateString = z
 export const createExpenseSchema = z
   .object({
     date: isoDateString.optional(),
-    category: z.enum(EXPENSE_CATEGORIES, { message: 'Invalid category' }),
+    category: z.enum(EXPENSE_CATEGORIES, { message: 'Invalid category' }).optional(),
+    expenseName: z.string().trim().optional(),
     description: z
       .string()
       .trim()
@@ -27,6 +28,7 @@ export const updateExpenseSchema = z
   .object({
     date: isoDateString.optional(),
     category: z.enum(EXPENSE_CATEGORIES, { message: 'Invalid category' }).optional(),
+    expenseName: z.string().trim().optional(),
     description: z
       .string()
       .trim()

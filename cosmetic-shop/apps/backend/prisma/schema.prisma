@@ -70,17 +70,19 @@ model Product {
 }
 
 model Sale {
-  id            Int        @id @default(autoincrement())
-  invoiceNo     String     @unique
-  subtotal      Float
-  discount      Float      @default(0)
-  total         Float
-  paymentMethod String
-  customerId    Int?
-  customer      Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  id              Int        @id @default(autoincrement())
+  invoiceNo       String     @unique
+  subtotal        Float
+  discount        Float      @default(0)
+  total           Float
+  recognizedAmount Float     @default(0)
+  paymentMethod   String
+  customerId      Int?
+  customer        Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   khataTransactions KhataTransaction[]
-  items         SaleItem[]
-  createdAt     DateTime   @default(now())
+  items           SaleItem[]
+  paymentAllocations PaymentAllocation[]
+  createdAt       DateTime   @default(now())
 
   @@index([customerId])
 }
@@ -117,11 +119,13 @@ model Expense {
   id          Int      @id @default(autoincrement())
   date        DateTime @default(now())
   category    String
+  expenseName String?   // Named expense head/payee (e.g. Lunch, Rent, Fazil)
   description String
   amount      Float
   createdAt   DateTime @default(now())
 
   @@index([date])
+  @@index([expenseName])
 }
 
 model Customer {
@@ -151,8 +155,24 @@ model KhataTransaction {
   saleId      Int?
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   sale        Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  paymentAllocations PaymentAllocation[]
   createdAt   DateTime @default(now())
 
   @@index([customerId, createdAt])
+  @@index([saleId])
+}
+
+model PaymentAllocation {
+  id        Int @id @default(autoincrement())
+  paymentId Int   // FK to KhataTransaction (type PAYMENT)
+  saleId    Int   // FK to Sale being settled
+  amount    Float // Amount allocated from the payment to this sale
+  createdAt DateTime @default(now())
+
+  payment KhataTransaction @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  sale    Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, saleId])
+  @@index([paymentId])
   @@index([saleId])
 }

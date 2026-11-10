@@ -2,6 +2,10 @@ import { prisma } from '../db/prisma.js';
 import { EXPENSE_CATEGORIES } from '../config/constants.js';
 import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
 
+function toMoney(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
 function parseDateValue(rawValue, label = 'date') {
   if (rawValue === undefined || rawValue === null || rawValue === '') return null;
   const value = String(rawValue).trim();
@@ -32,6 +36,7 @@ function normalizeLimit(value, fieldName) {
 export async function createExpense(data) {
   const payload = {
     category: data.category,
+    expenseName: data.expenseName?.trim() || null,
     description: data.description.trim(),
     amount: Number(data.amount),
     date: parseDateValue(data.date) ?? new Date(),
@@ -52,6 +57,13 @@ export async function listExpenses(query = {}) {
       throw httpError(400, 'Invalid category');
     }
     where.category = category;
+  }
+
+  if (query.expenseName) {
+    const expenseName = String(query.expenseName).trim();
+    if (expenseName) {
+      where.expenseName = expenseName;
+    }
   }
 
   const fromValue = query.from !== undefined ? parseDateValue(query.from, 'from') : null;
@@ -85,12 +97,28 @@ export async function listExpenses(query = {}) {
     }),
   ]);
 
+  // Calculate cumulative totals grouped by expenseName for the filtered date range
+  const expenseNameAgg = await prisma.expense.groupBy({
+    by: ['expenseName'],
+    where,
+    _sum: { amount: true },
+    orderBy: {
+      _sum: { amount: 'desc' },
+    },
+  });
+
+  const cumulativeTotals = expenseNameAgg.map((row) => ({
+    expenseName: row.expenseName || 'Uncategorized',
+    total: toMoney(row._sum.amount ?? 0),
+  }));
+
   return {
     items,
     total,
     page,
     limit,
     totalPages: Math.ceil(total / limit),
+    cumulativeTotals,
   };
 }
 

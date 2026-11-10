@@ -63,15 +63,26 @@ function utcDateString() {
  * applied a second time.
  */
 async function aggregateSales(gte, lte) {
-  const agg = await prisma.sale.aggregate({
-    where: { createdAt: { gte, lte } },
-    _sum: { subtotal: true, discount: true },
-    _count: true,
-  });
+  const rows = await prisma.$queryRawUnsafe(
+    `SELECT
+       COUNT(*) AS salesCount,
+       COALESCE(SUM(
+         CASE WHEN s."paymentMethod" != 'KHATA'
+           THEN s."total"
+           ELSE s."recognizedAmount"
+         END
+       ), 0) AS revenue,
+       COALESCE(SUM(s."discount"), 0) AS discount
+     FROM "Sale" s
+     WHERE s."createdAt" >= ? AND s."createdAt" <= ?`,
+    gte,
+    lte,
+  );
+  const row = rows[0];
   return {
-    salesCount: Number(agg._count ?? 0),
-    revenue: toMoney(agg._sum.subtotal ?? 0),
-    discount: toMoney(agg._sum.discount ?? 0),
+    salesCount: Number(row?.salesCount ?? 0),
+    revenue: toMoney(row?.revenue ?? 0),
+    discount: toMoney(row?.discount ?? 0),
   };
 }
 
@@ -102,6 +113,26 @@ async function aggregateExpenses(gte, lte) {
   return toMoney(agg._sum.amount ?? 0);
 }
 
+/**
+ * Aggregate expenses within inclusive UTC boundaries [gte, lte], grouped by
+ * expenseName (expense head / payee). Returns cumulative totals per expense head.
+ */
+export async function aggregateExpensesByName(gte, lte) {
+  const agg = await prisma.expense.groupBy({
+    by: ['expenseName'],
+    where: { date: { gte, lte } },
+    _sum: { amount: true },
+    orderBy: {
+      _sum: { amount: 'desc' },
+    },
+  });
+  const result = agg.map((row) => ({
+    expenseName: row.expenseName || 'Uncategorized',
+    total: toMoney(row._sum.amount ?? 0),
+  }));
+  return result;
+}
+
 
 /**
  * A. Daily report for one UTC date (defaults to today's UTC date).
@@ -112,7 +143,9 @@ export async function getDailyReport(dateString) {
   const lte = endOfDayUtc(date);
 
   const { salesCount, revenue, discount } = await aggregateSales(gte, lte);
-  const netSales = toMoney(revenue - discount);
+  // recognizedAmount is already net of discount (based on Sale.total),
+  // so netSales equals recognized revenue.
+  const netSales = revenue;
   const cogs = await aggregateCogs(gte, lte);
   const expenses = await aggregateExpenses(gte, lte);
   const grossProfit = toMoney(netSales - cogs);
@@ -148,7 +181,7 @@ export async function getPnlReport(fromDate, toDate) {
   const lte = endOfDayUtc(to);
 
   const { revenue, discount } = await aggregateSales(gte, lte);
-  const netSales = toMoney(revenue - discount);
+  const netSales = revenue;
   const cogs = await aggregateCogs(gte, lte);
   const expenses = await aggregateExpenses(gte, lte);
   const grossProfit = toMoney(netSales - cogs);

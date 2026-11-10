@@ -259,3 +259,231 @@ test('T7 pagination', async () => {
   const tooBigLimit = await req('GET', '/api/expenses', { token: adminToken, query: { limit: '101' } });
   assert.equal(tooBigLimit.status, 400);
 });
+
+test('T8 cumulative Lunch total', async () => {
+  const before = await prisma.expense.count();
+
+  const r1 = await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-01T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch',
+      description: 'Team lunch',
+      amount: 100,
+    },
+  });
+  assert.equal(r1.status, 201);
+
+  const r2 = await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-02T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch',
+      description: 'Team lunch day 2',
+      amount: 100,
+    },
+  });
+  assert.equal(r2.status, 201);
+
+  const list = await req('GET', '/api/expenses', { token: adminToken });
+  assert.equal(list.status, 200);
+
+  const lunchTotals = list.body.cumulativeTotals.filter((t) => t.expenseName === 'Lunch');
+  assert.ok(lunchTotals.length > 0, 'Lunch should appear in cumulative totals');
+  assert.equal(lunchTotals[0].total, 200, 'Cumulative Lunch total should be 200');
+
+  assert.equal(await prisma.expense.count(), before + 2, 'Two separate Lunch records must exist');
+});
+
+test('T9 cumulative Fazil total', async () => {
+  const r1 = await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-03T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Fazil',
+      description: 'Payment to Fazil',
+      amount: 200,
+    },
+  });
+  assert.equal(r1.status, 201);
+
+  const r2 = await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-04T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Fazil',
+      description: 'Second payment to Fazil',
+      amount: 300,
+    },
+  });
+  assert.equal(r2.status, 201);
+
+  const list = await req('GET', '/api/expenses', { token: adminToken });
+  assert.equal(list.status, 200);
+
+  const fazilTotals = list.body.cumulativeTotals.filter((t) => t.expenseName === 'Fazil');
+  assert.ok(fazilTotals.length > 0, 'Fazil should appear in cumulative totals');
+  assert.equal(fazilTotals[0].total, 500, 'Cumulative Fazil total should be 500');
+});
+
+test('T10 multiple Rent payments sum', async () => {
+  const amounts = [5000, 5000, 3000, 2000];
+  for (const amount of amounts) {
+    const r = await req('POST', '/api/expenses', {
+      token: adminToken,
+      body: {
+        date: '2024-02-05T10:00:00.000Z',
+        category: 'RENT',
+        expenseName: 'Rent',
+        description: 'Monthly rent',
+        amount,
+      },
+    });
+    assert.equal(r.status, 201);
+  }
+
+  const list = await req('GET', '/api/expenses', { token: adminToken });
+  assert.equal(list.status, 200);
+
+  const rentTotals = list.body.cumulativeTotals.filter((t) => t.expenseName === 'Rent');
+  assert.ok(rentTotals.length > 0, 'Rent should appear in cumulative totals');
+  assert.equal(rentTotals[0].total, 15000, 'Cumulative Rent total should be 15000');
+});
+
+test('T11 different expense heads never get mixed', async () => {
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-06T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch-T11',
+      description: 'Lunch',
+      amount: 100,
+    },
+  });
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-02-06T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Fazil-T11',
+      description: 'Fazil',
+      amount: 200,
+    },
+  });
+
+  const list = await req('GET', '/api/expenses', { token: adminToken });
+  assert.equal(list.status, 200);
+
+  const byName = {};
+  for (const t of list.body.cumulativeTotals) {
+    byName[t.expenseName] = t.total;
+  }
+  assert.equal(byName['Lunch-T11'], 100, 'Lunch-T11 must not include Fazil-T11');
+  assert.equal(byName['Fazil-T11'], 200, 'Fazil-T11 must not include Lunch-T11');
+});
+
+test('T12 date filters calculate correct totals', async () => {
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-03-01T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch',
+      description: 'March lunch',
+      amount: 100,
+    },
+  });
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-04-01T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch',
+      description: 'April lunch',
+      amount: 200,
+    },
+  });
+
+  const march = await req('GET', '/api/expenses', {
+    token: adminToken,
+    query: { from: '2024-03-01', to: '2024-03-31' },
+  });
+  assert.equal(march.status, 200);
+  const marchLunch = march.body.cumulativeTotals.filter((t) => t.expenseName === 'Lunch');
+  assert.equal(marchLunch[0]?.total, 100, 'March Lunch total should be 100');
+
+  const april = await req('GET', '/api/expenses', {
+    token: adminToken,
+    query: { from: '2024-04-01', to: '2024-04-30' },
+  });
+  assert.equal(april.status, 200);
+  const aprilLunch = april.body.cumulativeTotals.filter((t) => t.expenseName === 'Lunch');
+  assert.equal(aprilLunch[0]?.total, 200, 'April Lunch total should be 200');
+});
+
+test('T13 total expenses do not double count cumulative summaries', async () => {
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-05-01T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch-T13',
+      description: 'Lunch 1',
+      amount: 100,
+    },
+  });
+  await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-05-02T10:00:00.000Z',
+      category: 'OTHER',
+      expenseName: 'Lunch-T13',
+      description: 'Lunch 2',
+      amount: 100,
+    },
+  });
+
+  const list = await req('GET', '/api/expenses', { token: adminToken });
+  assert.equal(list.status, 200);
+
+  const lunchItems = list.body.items.filter((i) => i.expenseName === 'Lunch-T13');
+  assert.equal(lunchItems.length, 2, 'Should see 2 individual Lunch-T13 records');
+
+  const lunchTotals = list.body.cumulativeTotals.filter((t) => t.expenseName === 'Lunch-T13');
+  assert.equal(lunchTotals[0].total, 200, 'Cumulative Lunch-T13 total should be 200');
+
+  const individualSum = lunchItems.reduce((sum, i) => sum + Number(i.amount), 0);
+  assert.equal(individualSum, 200, 'Sum of individual Lunch-T13 amounts must equal cumulative total');
+});
+
+test('T14 existing expenses remain intact', async () => {
+  const beforeCount = await prisma.expense.count();
+
+  const r = await req('POST', '/api/expenses', {
+    token: adminToken,
+    body: {
+      date: '2024-06-01T10:00:00.000Z',
+      category: 'UTILITIES',
+      description: 'Power bill',
+      amount: 150,
+    },
+  });
+  assert.equal(r.status, 201);
+
+  const afterCount = await prisma.expense.count();
+  assert.equal(afterCount, beforeCount + 1);
+
+  const created = await prisma.expense.findFirst({
+    where: { description: 'Power bill' },
+    orderBy: { createdAt: 'desc' },
+  });
+  assert.ok(created, 'Expense record must exist');
+  assert.equal(created.category, 'UTILITIES');
+  assert.equal(Number(created.amount), 150);
+  assert.equal(created.expenseName, null, 'expenseName should be null when not provided');
+});
