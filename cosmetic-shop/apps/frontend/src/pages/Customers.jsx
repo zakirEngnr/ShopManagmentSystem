@@ -13,11 +13,13 @@ import {
   User,
   Menu,
   ChevronDown,
+  Banknote,
 } from 'lucide-react';
 import {
   createCustomer,
   deleteCustomer,
   fetchCustomers,
+  recordCustomerDebt,
   updateCustomer,
 } from '../api/customers';
 
@@ -86,6 +88,13 @@ export default function Customers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+
+  const [debtTarget, setDebtTarget] = useState(null);
+  const [debtOpen, setDebtOpen] = useState(false);
+  const [debtForm, setDebtForm] = useState({ amount: '', description: '' });
+  const [debtErrors, setDebtErrors] = useState({});
+  const [recordingDebt, setRecordingDebt] = useState(false);
+  const [debtError, setDebtError] = useState(null);
 
   const tabType = useMemo(() => {
     return customerTab === 'retail' ? 'RETAIL' : undefined;
@@ -254,6 +263,69 @@ export default function Customers() {
       );
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const openDebt = (customer) => {
+    setDebtTarget(customer);
+    setDebtForm({ amount: '', description: '' });
+    setDebtErrors({});
+    setDebtError(null);
+    setDebtOpen(true);
+  };
+
+  const closeDebt = () => {
+    setDebtOpen(false);
+    setDebtTarget(null);
+    setDebtForm({ amount: '', description: '' });
+    setDebtErrors({});
+    setDebtError(null);
+  };
+
+  const validateDebt = () => {
+    const errors = {};
+    const amountNum = Number(debtForm.amount);
+    if (debtForm.amount === '' || debtForm.amount == null)
+      errors.amount = 'Amount is required.';
+    else if (!Number.isFinite(amountNum) || amountNum <= 0)
+      errors.amount = 'Amount must be greater than zero.';
+    else if (amountNum > 1e9)
+      errors.amount = 'Amount must not exceed 1000000000.';
+    if (debtForm.description === '' || !debtForm.description.trim())
+      errors.description = 'Description is required.';
+    return errors;
+  };
+
+  const handleDebtSubmit = async (e) => {
+    e.preventDefault();
+    const errors = validateDebt();
+    if (Object.keys(errors).length > 0) {
+      setDebtErrors(errors);
+      return;
+    }
+    setDebtErrors({});
+    setDebtError(null);
+    setRecordingDebt(true);
+
+    try {
+      const result = await recordCustomerDebt(debtTarget.id, {
+        amount: debtForm.amount,
+        description: debtForm.description,
+      });
+      setRecordingDebt(false);
+      setDebtOpen(false);
+      setDebtForm({ amount: '', description: '' });
+      setDebtTarget(null);
+      setSuccessMessage(
+        `Debt of ${formatCurrency(Number(debtForm.amount))} recorded for ${result.customer.name}.`
+      );
+      requestSeqRef.current += 1;
+      void fetchCustomersPage(searchQuery, false);
+    } catch (err) {
+      setRecordingDebt(false);
+      setDebtError(
+        err.response?.data?.error?.message || 'Failed to record debt entry.'
+      );
     }
   };
 
@@ -558,6 +630,16 @@ export default function Customers() {
                     >
                       <Edit className="h-4 w-4" />
                     </button>
+                    {customer.type !== 'RETAIL' && (
+                      <button
+                        type="button"
+                        onClick={() => openDebt(customer)}
+                        title="Record debt"
+                        className="p-2 rounded-md text-purple-600 hover:bg-purple-50 hover:text-purple-700 transition-colors"
+                      >
+                        <Banknote className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -796,6 +878,104 @@ export default function Customers() {
                 {deleting ? 'Deleting...' : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {debtOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+            onClick={closeDebt}
+          />
+          <div className="relative w-full max-w-md rounded-[28px] border border-[var(--app-border)] bg-[var(--app-panel)] p-6 shadow-2xl animate-pop-in">
+            <div className="flex items-center gap-2 mb-6">
+              <Banknote className="h-5 w-5 text-purple-600" />
+              <h3 className="text-xl font-extrabold text-[var(--app-text)]">
+                Record Manual Debt
+              </h3>
+            </div>
+            <p className="text-sm text-[var(--app-text-soft)] mb-6">
+              Records an amount owed by{' '}
+              <strong>{debtTarget?.name}</strong>. This does not create a product
+              sale or change inventory.
+            </p>
+            <form onSubmit={handleDebtSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">
+                  Amount Owed (Rs.)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={debtForm.amount}
+                  onChange={(e) =>
+                    setDebtForm({ ...debtForm, amount: e.target.value })
+                  }
+                  className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
+                  placeholder="0.00"
+                />
+                {debtErrors.amount && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {debtErrors.amount}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">
+                  Description / Reason
+                </label>
+                <input
+                  type="text"
+                  value={debtForm.description}
+                  onChange={(e) =>
+                    setDebtForm({ ...debtForm, description: e.target.value })
+                  }
+                  className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
+                  placeholder="e.g., Supply of goods, Service charge, etc."
+                />
+                {debtErrors.description && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {debtErrors.description}
+                  </p>
+                )}
+              </div>
+
+              {debtError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                  {debtError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeDebt}
+                  disabled={recordingDebt}
+                  className="rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-4 py-2.5 text-sm font-bold text-[var(--app-text)] transition hover:bg-[var(--app-panel)] disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recordingDebt}
+                  className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:opacity-70"
+                >
+                  {recordingDebt ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Recording...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" /> Record Debt Entry
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
