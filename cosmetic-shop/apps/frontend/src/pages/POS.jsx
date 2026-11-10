@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search, Barcode, Package, AlertCircle, Loader2, Sparkles,
   ShoppingCart, Trash2, Plus, Minus, Save, CheckCircle,
-  DollarSign, Smartphone, Edit2, Check, User,
+  DollarSign, Smartphone, Edit2, Check, User, X,
 } from 'lucide-react';
 import { fetchProducts, fetchProductByBarcode } from '../api/products';
 import { createSale } from '../api/sales';
@@ -18,7 +18,7 @@ const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash', icon: DollarSign },
   { value: 'JAZZCASH', label: 'JazzCash', icon: Smartphone },
   { value: 'MOBILE', label: 'Easypaisa', icon: Smartphone },
-  { value: 'KHATA', label: 'Khata (Credit)', icon: User },
+  { value: 'KHATA', label: 'Udhaar / Credit', icon: User },
 ];
 
 const DEBOUNCE_MS = 300;
@@ -313,7 +313,7 @@ export default function POS() {
     }
 
     if (paymentMethod === 'KHATA' && !selectedCustomer) {
-      return 'Please select a customer for Khata (credit) sales.';
+      return 'Please select a person to record Udhaar for.';
     }
     return null;
   };
@@ -622,7 +622,7 @@ export default function POS() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--app-muted)]" />
                     <input
                       type="text"
-                      placeholder="Search customers by name or phone..."
+                      placeholder="Search person by name or phone..."
                       value={customerSearch}
                       onChange={(e) => setCustomerSearch(e.target.value)}
                       className="w-full pl-9 pr-4 py-2.5 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
@@ -641,14 +641,14 @@ export default function POS() {
                           {selectedCustomer.name}
                         </p>
                         <p className="text-xs text-[var(--app-muted)]">
-                          {formatCurrency(selectedCustomer.balance)} balance
+                          {formatCurrency(selectedCustomer.balance)} Udhaar
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSelectedCustomer(null)}
                         className="p-1.5 text-[var(--app-muted)] hover:text-red-600 transition-colors"
-                        title="Remove customer"
+                        title="Remove person"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -658,8 +658,8 @@ export default function POS() {
                       {customers.length === 0 ? (
                         <div className="px-4 py-3 text-sm text-[var(--app-muted)]">
                           {customerSearch
-                            ? 'No matching customers.'
-                            : 'No customers available. Add one from the Customers page.'}
+                            ? 'No matching people.'
+                            : 'No one registered yet. Add someone from the People / Udhaar page.'}
                         </div>
                       ) : (
                         <ul>
@@ -697,7 +697,7 @@ export default function POS() {
                   )}
                   {!selectedCustomer && (
                     <p className="text-xs text-red-600 font-medium">
-                      Please select a customer to proceed with Khata sale.
+                      Please select a person to record Udhaar for.
                     </p>
                   )}
                 </div>
@@ -734,7 +734,7 @@ export default function POS() {
               </p>
               {saleSuccess.customer && (
                 <p className="text-sm mt-1 bg-blue-700/30 px-3 py-1 rounded-full">
-                  Customer: {saleSuccess.customer.name}
+                  Udhaar recorded for: {saleSuccess.customer.name}
                 </p>
               )}
             </div>
@@ -747,7 +747,7 @@ export default function POS() {
                 onClick={() => setSaleSuccess(null)}
                 className="w-full py-3 bg-[var(--app-panel-2)] rounded-xl font-bold hover:bg-[var(--app-panel)] border border-[var(--app-border)]"
               >
-                Next Customer
+                Next Person
               </button>
             </div>
           </div>

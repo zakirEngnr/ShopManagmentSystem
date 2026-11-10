@@ -87,13 +87,13 @@ export default function OutstandingCustomers() {
             onClick={() => navigate('/customers')}
             className="inline-flex items-center gap-2 text-sm font-medium text-[var(--app-text-soft)] hover:text-indigo-600 transition-colors"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Customers
+            <ArrowLeft className="h-4 w-4" /> Back to People / Udhaar
           </button>
           <h2 className="text-2xl font-extrabold text-[var(--app-text)] mt-3 md:mt-0">
-            Outstanding Khata
+            Outstanding Udhaar
           </h2>
           <p className="text-sm text-[var(--app-muted)]">
-            Customers with a positive credit balance.
+            Everyone who owes you money
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -103,7 +103,8 @@ export default function OutstandingCustomers() {
             disabled={refreshing}
             className="flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-2.5 text-sm font-medium text-[var(--app-text)] transition hover:bg-[var(--app-panel-2)] disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4 animate-spin" /> Refresh
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -143,7 +144,7 @@ export default function OutstandingCustomers() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div className="flex flex-col">
             <p className="text-sm font-semibold text-[var(--app-muted)] uppercase tracking-wider">
-              Total Outstanding Debt
+              Total Udhaar Owed
             </p>
             <p className="text-3xl font-bold text-amber-700 dark:text-amber-400">
               {formatCurrency(totalOutstanding)}
@@ -151,7 +152,7 @@ export default function OutstandingCustomers() {
           </div>
           <div className="flex items-center gap-3">
             <span className="px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-semibold border border-amber-100 dark:border-amber-800">
-              {customers.length} customer{customers.length !== 1 ? 's' : ''}
+              {customers.length} person{customers.length !== 1 ? 's' : ''}
               owed
             </span>
           </div>
@@ -163,13 +164,13 @@ export default function OutstandingCustomers() {
           <thead>
             <tr className="border-b border-[var(--app-border)]">
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
-                Customer
+                Person
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
                 Phone
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50 text-right">
-                Amount Owed
+                Udhaar Amount
               </th>
               <th className="px-5 py-3.5 text-xs font-semibold text-[var(--app-muted)] uppercase tracking-wider bg-[var(--app-panel-2)]/50">
                 Created
@@ -196,7 +197,7 @@ export default function OutstandingCustomers() {
                     <div className="flex flex-col items-center justify-center gap-3">
                       <User className="h-8 w-8 text-[var(--app-muted)]" />
                       <p className="text-sm text-[var(--app-muted)]">
-                        No customers with outstanding balances.
+                        No one owes you money right now.
                       </p>
                     </div>
                   )}
