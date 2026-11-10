@@ -20,11 +20,16 @@ import client from './client';
  */
 
 /**
- * Fetch all customers ordered by name ascending.
+ * Fetch customers ordered by name ascending.
+ * @param {object} params - Optional query parameters { type? }
+ * @param {string} params.type - Optional customer type filter: 'RETAIL', 'BUSINESS', or 'PERSONAL'
  * Returns the customers array.
  */
-export async function fetchCustomers() {
-  const res = await client.get('/customers');
+export async function fetchCustomers({ type } = {}) {
+  const params = new URLSearchParams();
+  if (type) params.append('type', type);
+
+  const res = await client.get(`/customers${params.toString() ? '?' + params.toString() : ''}`);
 
   if (!res.data || typeof res.data !== 'object' || !Array.isArray(res.data.customers)) {
     throw new Error('Invalid customers response from server.');

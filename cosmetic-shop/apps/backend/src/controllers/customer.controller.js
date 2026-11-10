@@ -2,12 +2,14 @@ import { parse, parseId } from '../middleware/validate.js';
 import {
   createCustomerSchema,
   updateCustomerSchema,
+  customerListQuerySchema,
 } from '../schemas/customer.schema.js';
 import * as customerService from '../services/customer.service.js';
 
 export async function list(req, res, next) {
   try {
-    const customers = await customerService.listCustomers();
+    const query = parse(customerListQuerySchema, req.query);
+    const customers = await customerService.listCustomers(query);
     res.json({ ok: true, customers });
   } catch (err) {
     next(err);

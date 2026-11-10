@@ -132,12 +132,14 @@ model Customer {
   address      String?
   notes        String?
   balance      Float              @default(0)
+  type         String             @default("RETAIL")
   transactions KhataTransaction[]
   sales        Sale[]
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
   @@index([name])
+  @@index([type])
 }
 
 model KhataTransaction {

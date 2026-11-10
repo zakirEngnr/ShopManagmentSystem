@@ -9,7 +9,7 @@ import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
  * are never writable through this service.
  */
 
-const PERMITTED_FIELDS = ['name', 'phone', 'email', 'address', 'notes'];
+const PERMITTED_FIELDS = ['name', 'phone', 'email', 'address', 'notes', 'type'];
 
 function cleanPhone(value) {
   // Treat omitted / empty / null phone as null so multiple customers may
@@ -18,8 +18,12 @@ function cleanPhone(value) {
   return String(value).trim();
 }
 
-export async function listCustomers() {
-  return prisma.customer.findMany({ orderBy: { name: 'asc' } });
+export async function listCustomers(query = {}) {
+  const where = {};
+  if (query.type) {
+    where.type = query.type;
+  }
+  return prisma.customer.findMany({ where, orderBy: { name: 'asc' } });
 }
 
 export async function getCustomer(id) {
@@ -38,6 +42,7 @@ export async function createCustomer(data) {
         email: data.email,
         address: data.address,
         notes: data.notes,
+        type: data.type ?? 'RETAIL',
         balance: 0,
       },
     });

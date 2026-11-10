@@ -187,6 +187,133 @@ test('7 updating balance directly through the API is rejected', async () => {
   assert.equal(Number(row.balance), 0);
 });
 
+test('8 create customer without type defaults to RETAIL', async () => {
+  const res = await createCustomer({ name: 'NoType', phone: '+1000000100' });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.customer.type, 'RETAIL');
+  const row = await prisma.customer.findUnique({ where: { id: res.body.customer.id } });
+  assert.equal(row.type, 'RETAIL');
+});
+
+test('9 create BUSINESS customer works', async () => {
+  const res = await createCustomer({ name: 'Biz Corp', phone: '+1000000101', type: 'BUSINESS' });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.customer.type, 'BUSINESS');
+  const row = await prisma.customer.findUnique({ where: { id: res.body.customer.id } });
+  assert.equal(row.type, 'BUSINESS');
+});
+
+test('10 create PERSONAL customer works', async () => {
+  const res = await createCustomer({ name: 'Friend', phone: '+1000000102', type: 'PERSONAL' });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.customer.type, 'PERSONAL');
+  const row = await prisma.customer.findUnique({ where: { id: res.body.customer.id } });
+  assert.equal(row.type, 'PERSONAL');
+});
+
+test('11 invalid customer type is rejected', async () => {
+  const res = await req('POST', '/api/customers', {
+    token: adminToken,
+    body: { name: 'BadType', phone: '+1000000103', type: 'INVALID' },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(await prisma.customer.count({ where: { name: 'BadType' } }), 0);
+});
+
+test('12 updating customer type works', async () => {
+  const created = await createCustomer({ name: 'TypeChanger', phone: '+1000000104', type: 'RETAIL' });
+  const id = created.body.customer.id;
+  const res = await req('PATCH', `/api/customers/${id}`, {
+    token: adminToken,
+    body: { type: 'BUSINESS' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.customer.type, 'BUSINESS');
+  const row = await prisma.customer.findUnique({ where: { id } });
+  assert.equal(row.type, 'BUSINESS');
+});
+
+test('13 listing with RETAIL filter returns only retail customers', async () => {
+  await createCustomer({ name: 'Retail A', phone: '+1000000105', type: 'RETAIL' });
+  await createCustomer({ name: 'Retail B', phone: '+1000000106', type: 'RETAIL' });
+  await createCustomer({ name: 'Biz C', phone: '+1000000107', type: 'BUSINESS' });
+  await createCustomer({ name: 'Pers D', phone: '+1000000108', type: 'PERSONAL' });
+
+  const res = await req('GET', '/api/customers?type=RETAIL', { token: adminToken });
+  assert.equal(res.status, 200);
+  const names = res.body.customers.map((c) => c.name);
+  assert.ok(names.includes('Retail A') && names.includes('Retail B'));
+  assert.ok(!names.includes('Biz C') && !names.includes('Pers D'));
+  assert.ok(res.body.customers.every((c) => c.type === 'RETAIL'));
+});
+
+test('14 listing with BUSINESS filter returns only business customers', async () => {
+  const res = await req('GET', '/api/customers?type=BUSINESS', { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.customers.every((c) => c.type === 'BUSINESS'));
+  const names = res.body.customers.map((c) => c.name);
+  assert.ok(names.includes('Biz C'));
+});
+
+test('15 listing with PERSONAL filter returns only personal customers', async () => {
+  const res = await req('GET', '/api/customers?type=PERSONAL', { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.customers.every((c) => c.type === 'PERSONAL'));
+  const names = res.body.customers.map((c) => c.name);
+  assert.ok(names.includes('Pers D'));
+});
+
+test('16 listing without a filter returns all customer types', async () => {
+  const res = await req('GET', '/api/customers', { token: adminToken });
+  assert.equal(res.status, 200);
+  const types = new Set(res.body.customers.map((c) => c.type));
+  assert.ok(types.has('RETAIL') && types.has('BUSINESS') && types.has('PERSONAL'));
+});
+
+test('17 changing customer type does not change ledger balance or transaction history', async () => {
+  const created = await createCustomer({ name: 'LedgerKeeper', phone: '+1000000109', type: 'RETAIL' });
+  const id = created.body.customer.id;
+
+  // Create a product and a KHATA sale to give this customer a balance
+  const product = await prisma.product.create({
+    data: {
+      sku: `TEST-TYPE-${Date.now()}`,
+      name: 'Type Test Product',
+      type: 'COSMETIC',
+      costPrice: 5,
+      sellPrice: 10,
+      stock: 100,
+      categoryId,
+      brandId,
+    },
+  });
+  await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'KHATA',
+      customerId: id,
+      discount: 0,
+      items: [{ productId: product.id, quantity: 2, unitPrice: 10 }],
+    },
+  });
+
+  const before = await prisma.customer.findUnique({ where: { id } });
+  const txsBefore = await prisma.khataTransaction.count({ where: { customerId: id } });
+
+  // Change type
+  await req('PATCH', `/api/customers/${id}`, {
+    token: adminToken,
+    body: { type: 'BUSINESS' },
+  });
+
+  const after = await prisma.customer.findUnique({ where: { id } });
+  const txsAfter = await prisma.khataTransaction.count({ where: { customerId: id } });
+
+  assert.equal(Number(after.balance), Number(before.balance));
+  assert.equal(txsAfter, txsBefore);
+  assert.equal(after.type, 'BUSINESS');
+});
+
 test('8 delete customer without transactions: succeeds', async () => {
   const created = await createCustomer({ name: 'Temp', phone: '+1000000001' });
   const id = created.body.customer.id;
