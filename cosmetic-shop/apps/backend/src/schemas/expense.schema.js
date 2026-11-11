@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { EXPENSE_CATEGORIES } from '../config/constants.js';
+import { moneyAmount, withTwoDecimals } from '../utils/money.js';
 
 const isoDateString = z
   .string()
@@ -18,9 +19,9 @@ export const createExpenseSchema = z
       .trim()
       .min(1, { message: 'Description is required' })
       .max(255, { message: 'Description is too long' }),
-    amount: z.number().finite().gt(0).lte(1_000_000_000, {
+    amount: withTwoDecimals(moneyAmount().gt(0).lte(1_000_000_000, {
       message: 'amount must be greater than 0 and at most 1000000000',
-    }),
+    })),
   })
   .strict();
 
@@ -35,14 +36,9 @@ export const updateExpenseSchema = z
       .min(1, { message: 'Description is required' })
       .max(255, { message: 'Description is too long' })
       .optional(),
-    amount: z
-      .number()
-      .finite()
-      .gt(0)
-      .lte(1_000_000_000, {
-        message: 'amount must be greater than 0 and at most 1000000000',
-      })
-      .optional(),
+    amount: withTwoDecimals(moneyAmount().gt(0).lte(1_000_000_000, {
+      message: 'amount must be greater than 0 and at most 1000000000',
+    })).optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length >= 1, {

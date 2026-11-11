@@ -1,9 +1,10 @@
 import { prisma } from '../db/prisma.js';
 import { EXPENSE_CATEGORIES } from '../config/constants.js';
 import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
+import { add, toPaisa, fromPaisa } from '../utils/money.js';
 
 function toMoney(value) {
-  return Number(Number(value || 0).toFixed(2));
+  return fromPaisa(toPaisa(value || 0));
 }
 
 function parseDateValue(rawValue, label = 'date') {
@@ -34,11 +35,17 @@ function normalizeLimit(value, fieldName) {
 }
 
 export async function createExpense(data) {
+  const amount = Number(data.amount);
+  const paisa = toPaisa(amount);
+  if (!Number.isFinite(amount) || paisa <= 0) {
+    throw httpError(400, 'Amount must be a positive number');
+  }
+
   const payload = {
     category: data.category,
     expenseName: data.expenseName?.trim() || null,
     description: data.description.trim(),
-    amount: Number(data.amount),
+    amount,
     date: parseDateValue(data.date) ?? new Date(),
   };
 
@@ -112,7 +119,7 @@ export async function listExpenses(query = {}) {
   for (const exp of allFilteredExpenses) {
     const nameKey = exp.expenseName ? exp.expenseName.toLowerCase() : 'uncategorized';
     const current = totalsMap.get(nameKey) || { displayName: exp.expenseName || 'Uncategorized', total: 0 };
-    current.total += Number(exp.amount || 0);
+    current.total = add(current.total, Number(exp.amount || 0));
     totalsMap.set(nameKey, current);
   }
 
@@ -145,7 +152,14 @@ export async function updateExpense(id, data) {
   if (data.date !== undefined) payload.date = parseDateValue(data.date, 'date') ?? new Date();
   if (data.category !== undefined) payload.category = data.category;
   if (data.description !== undefined) payload.description = data.description.trim();
-  if (data.amount !== undefined) payload.amount = Number(data.amount);
+  if (data.amount !== undefined) {
+    const amount = Number(data.amount);
+    const paisa = toPaisa(amount);
+    if (!Number.isFinite(amount) || paisa <= 0) {
+      throw httpError(400, 'Amount must be a positive number');
+    }
+    payload.amount = amount;
+  }
 
   try {
     return await prisma.expense.update({ where: { id }, data: payload });

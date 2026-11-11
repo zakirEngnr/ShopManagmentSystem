@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { moneyAmount, withTwoDecimals } from '../utils/money.js';
 
 /**
  * Zod schemas for the Khata customer module.
@@ -39,14 +40,14 @@ export const updateCustomerSchema = z
 
 export const recordPaymentSchema = z
   .object({
-    amount: z.number().finite().gt(0).max(1e9),
+    amount: withTwoDecimals(moneyAmount().gt(0).max(1e9)),
     description: z.string().trim().max(500).nullish(),
   })
   .strict();
 
 export const recordDebtSchema = z
   .object({
-    amount: z.number().finite().gt(0).max(1e9),
+    amount: withTwoDecimals(moneyAmount().gt(0).max(1e9)),
     description: z.string().trim().min(1, { message: 'Required' }).max(500),
   })
   .strict();

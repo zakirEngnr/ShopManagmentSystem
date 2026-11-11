@@ -1,9 +1,10 @@
 import { prisma } from '../db/prisma.js';
 import { httpError } from '../utils/prismaErrors.js';
+import { add, toPaisa, fromPaisa } from '../utils/money.js';
 
 /** Round monetary values to cents, avoiding float dust. */
 function toMoney(value) {
-  return Number(Number(value || 0).toFixed(2));
+  return fromPaisa(toPaisa(value || 0));
 }
 
 function startOfDayUtc(date) {
@@ -79,10 +80,12 @@ async function aggregateSales(gte, lte) {
     lte,
   );
   const row = rows[0];
+  const revenuePaisa = toPaisa(row?.revenue ?? 0);
+  const discountPaisa = toPaisa(row?.discount ?? 0);
   return {
     salesCount: Number(row?.salesCount ?? 0),
-    revenue: toMoney(row?.revenue ?? 0),
-    discount: toMoney(row?.discount ?? 0),
+    revenue: fromPaisa(revenuePaisa),
+    discount: fromPaisa(discountPaisa),
   };
 }
 

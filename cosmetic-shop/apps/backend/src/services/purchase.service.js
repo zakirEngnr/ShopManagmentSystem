@@ -1,6 +1,8 @@
 import { prisma } from '../db/prisma.js';
 import { httpError } from '../utils/prismaErrors.js';
 import { createPurchaseSchema, purchaseListQuerySchema } from '../schemas/purchase.schema.js';
+import { createProduct } from './product.service.js';
+import { add, multiply } from '../utils/money.js';
 
 const MAX_AMOUNT = 1e9;
 const productLocks = new Map();
@@ -88,7 +90,9 @@ export async function listPurchases(query = {}) {
 export async function createPurchase(data) {
   const parsed = createPurchaseSchema.parse(data);
   const { supplierId, items } = parsed;
-  const productIds = items.map((item) => item.productId);
+  const productIds = items
+    .filter((item) => 'productId' in item)
+    .map((item) => item.productId);
   if (new Set(productIds).size !== productIds.length) {
     throw httpError(400, 'Duplicate product IDs are not allowed');
   }
@@ -101,15 +105,35 @@ export async function createPurchase(data) {
         throw httpError(404, 'Supplier not found');
       }
 
-      const products = await tx.product.findMany({
-        where: { id: { in: productIds } },
-      });
-      const productMap = new Map(products.map((product) => [product.id, product]));
+      const resolvedItems = [];
 
       for (const item of items) {
-        const product = productMap.get(item.productId);
-        if (!product) {
-          throw httpError(404, 'Product not found');
+        if ('productId' in item) {
+          const product = await tx.product.findUnique({ where: { id: item.productId } });
+          if (!product) {
+            throw httpError(404, 'Product not found');
+          }
+          if (!Number.isFinite(item.unitCost) || item.unitCost <= 0 || item.unitCost > MAX_AMOUNT) {
+            throw httpError(400, 'Invalid unitCost');
+          }
+          if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+            throw httpError(400, 'Invalid quantity');
+          }
+          if (product.stock > 0 && item.quantity >= 5 && item.quantity > product.stock) {
+            throw httpError(400, 'Purchase quantity exceeds current stock');
+          }
+
+          resolvedItems.push({
+            productId: item.productId,
+            quantity: item.quantity,
+            unitCost: Number(item.unitCost),
+            isNewProduct: false,
+          });
+          continue;
+        }
+
+        if (!('newProduct' in item)) {
+          throw httpError(400, 'One of productId or newProduct is required');
         }
         if (!Number.isFinite(item.unitCost) || item.unitCost <= 0 || item.unitCost > MAX_AMOUNT) {
           throw httpError(400, 'Invalid unitCost');
@@ -117,13 +141,23 @@ export async function createPurchase(data) {
         if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
           throw httpError(400, 'Invalid quantity');
         }
-        if (product.stock > 0 && item.quantity >= 5 && item.quantity > product.stock) {
-          throw httpError(400, 'Purchase quantity exceeds current stock');
-        }
+
+        const createdProduct = await createProduct({
+          ...item.newProduct,
+          stock: item.quantity,
+        }, tx);
+
+        resolvedItems.push({
+          productId: createdProduct.id,
+          quantity: item.quantity,
+          unitCost: Number(item.unitCost),
+          isNewProduct: true,
+        });
       }
 
-      const totalAmount = Number(
-        items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitCost), 0).toFixed(2),
+      const totalAmount = resolvedItems.reduce(
+        (sum, item) => add(sum, multiply(item.unitCost, item.quantity)),
+        0,
       );
       if (!Number.isFinite(totalAmount) || totalAmount <= 0 || totalAmount > MAX_AMOUNT * 10_000) {
         throw httpError(400, 'Purchase total is invalid');
@@ -138,17 +172,18 @@ export async function createPurchase(data) {
         },
       });
 
-      const purchaseItems = items.map((item) => ({
+      const purchaseItems = resolvedItems.map((item) => ({
         purchaseId: purchase.id,
         productId: item.productId,
         quantity: item.quantity,
         unitCost: Number(item.unitCost),
-        total: Number((item.quantity * item.unitCost).toFixed(2)),
+        total: multiply(item.unitCost, item.quantity),
       }));
 
       await tx.purchaseItem.createMany({ data: purchaseItems });
 
-      for (const item of purchaseItems) {
+      for (const item of resolvedItems) {
+        if (item.isNewProduct) continue;
         await tx.product.update({
           where: { id: item.productId },
           data: {

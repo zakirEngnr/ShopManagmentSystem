@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { httpError } from '../utils/prismaErrors.js';
+import { toPaisa, fromPaisa } from '../utils/money.js';
 
 const MAX_PAYMENT_AMOUNT = 1e9;
 
@@ -55,8 +56,9 @@ export async function createSupplier(data) {
 }
 
 export async function recordPayment(supplierId, data) {
-  const amount = Number(data.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const amount = Number(data?.amount);
+  const paisa = toPaisa(amount);
+  if (!Number.isFinite(amount) || paisa <= 0) {
     throw httpError(400, 'Amount must be a positive number');
   }
   if (amount > MAX_PAYMENT_AMOUNT) {
@@ -67,11 +69,11 @@ export async function recordPayment(supplierId, data) {
     const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
     if (!supplier) throw httpError(404, 'Supplier not found');
 
-    const currentBalance = Number(supplier.balance || 0);
-    if (currentBalance <= 0) {
+    const balancePaisa = toPaisa(Number(supplier.balance || 0));
+    if (balancePaisa <= 0) {
       throw httpError(400, 'No outstanding balance to pay');
     }
-    if (amount > currentBalance) {
+    if (paisa > balancePaisa) {
       throw httpError(400, "Payment cannot exceed the supplier's outstanding balance.");
     }
 
@@ -83,47 +85,48 @@ export async function recordPayment(supplierId, data) {
       },
     });
 
-    let remaining = amount;
+    let remainingPaisa = paisa;
     const purchases = await tx.purchase.findMany({
       where: { supplierId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
     for (const purchase of purchases) {
-      if (remaining <= 0) break;
-      const total = Number(purchase.totalAmount || 0);
-      const paid = Number(purchase.paidAmount || 0);
-      const due = total - paid;
-      if (due <= 0) continue;
+      if (remainingPaisa <= 0) break;
+      const totalPaisa = toPaisa(Number(purchase.totalAmount || 0));
+      const paidPaisa = toPaisa(Number(purchase.paidAmount || 0));
+      const duePaisa = totalPaisa - paidPaisa;
+      if (duePaisa <= 0) continue;
 
-      const allocation = Math.min(remaining, due);
-      if (allocation <= 0) continue;
+      const allocatePaisa = Math.min(remainingPaisa, duePaisa);
+      if (allocatePaisa <= 0) continue;
 
-      const nextPaid = paid + allocation;
+      const nextPaidPaisa = paidPaisa + allocatePaisa;
       await tx.purchase.update({
         where: { id: purchase.id },
         data: {
-          paidAmount: nextPaid,
-          status: resolvePurchaseStatus(total, nextPaid),
+          paidAmount: fromPaisa(nextPaidPaisa),
+          status: resolvePurchaseStatus(fromPaisa(totalPaisa), fromPaisa(nextPaidPaisa)),
         },
       });
       await tx.supplierPaymentAllocation.create({
         data: {
           supplierPaymentId: payment.id,
           purchaseId: purchase.id,
-          amount: allocation,
+          amount: fromPaisa(allocatePaisa),
         },
       });
-      remaining = Number((remaining - allocation).toFixed(2));
+      remainingPaisa -= allocatePaisa;
     }
 
-    if (remaining > 0) {
+    if (remainingPaisa > 0) {
       throw httpError(400, "Payment cannot exceed the supplier's outstanding balance.");
     }
 
+    const newBalancePaisa = balancePaisa - paisa;
     const updatedSupplier = await tx.supplier.update({
       where: { id: supplierId },
-      data: { balance: { decrement: amount } },
+      data: { balance: fromPaisa(newBalancePaisa) },
     });
 
     const allocations = await tx.supplierPaymentAllocation.findMany({

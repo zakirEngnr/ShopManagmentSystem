@@ -1,12 +1,25 @@
 import { z } from 'zod';
+import { productCreateSchema } from './product.schema.js';
+import { moneyAmount, withTwoDecimals } from '../utils/money.js';
 
-const purchaseItemSchema = z
+const purchaseLineItemBaseSchema = z
   .object({
-    productId: z.number().int().positive().safe(),
     quantity: z.number().int().positive().max(1000000),
-    unitCost: z.number().finite().gt(0).max(1e9),
+    unitCost: withTwoDecimals(moneyAmount().gt(0).max(1e9)),
   })
   .strict();
+
+const existingPurchaseItemSchema = purchaseLineItemBaseSchema.extend({
+  productId: z.number().int().positive().safe(),
+}).strict();
+
+const newProductPurchaseSchema = productCreateSchema.omit({ stock: true }).strict();
+
+const newPurchaseItemSchema = purchaseLineItemBaseSchema.extend({
+  newProduct: newProductPurchaseSchema,
+}).strict();
+
+export const purchaseItemSchema = z.union([existingPurchaseItemSchema, newPurchaseItemSchema]);
 
 export const createPurchaseSchema = z
   .object({
@@ -17,6 +30,7 @@ export const createPurchaseSchema = z
   .refine((data) => {
     const seen = new Set();
     for (const item of data.items) {
+      if (!('productId' in item)) continue;
       if (seen.has(item.productId)) return false;
       seen.add(item.productId);
     }

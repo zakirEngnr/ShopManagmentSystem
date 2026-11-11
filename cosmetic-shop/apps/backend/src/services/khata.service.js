@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
+import { toPaisa, fromPaisa } from '../utils/money.js';
 
 const MAX_PAYMENT_AMOUNT = 1e9;
 
@@ -19,7 +20,8 @@ const MAX_PAYMENT_AMOUNT = 1e9;
  * and no duplicate ledger entry can be created.
  */
 export async function recordSale(customerId, saleId, amount, description, tx = prisma) {
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const paisa = toPaisa(amount);
+  if (!Number.isFinite(amount) || paisa <= 0) {
     throw httpError(400, 'Amount must be a positive number');
   }
   const customer = await tx.customer.findUnique({ where: { id: customerId } });
@@ -27,9 +29,11 @@ export async function recordSale(customerId, saleId, amount, description, tx = p
   const transaction = await tx.khataTransaction.create({
     data: { customerId, type: 'SALE', amount, description, saleId },
   });
+  // Compute new balance in integer paisa to avoid float residue.
+  const newBalancePaisa = toPaisa(Number(customer.balance || 0)) + toPaisa(amount);
   const updated = await tx.customer.update({
     where: { id: customerId },
-    data: { balance: { increment: amount } },
+    data: { balance: fromPaisa(newBalancePaisa) },
   });
   return { transaction, customer: updated };
 }
@@ -46,7 +50,8 @@ export async function recordSale(customerId, saleId, amount, description, tx = p
  * collections never affect product revenue, COGS, or profit.
  */
 export async function recordPayment(customerId, amount, description, tx = prisma) {
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const paisa = toPaisa(amount);
+  if (!Number.isFinite(amount) || paisa <= 0) {
     throw httpError(400, 'Amount must be a positive number');
   }
   if (amount > MAX_PAYMENT_AMOUNT) {
@@ -55,24 +60,23 @@ export async function recordPayment(customerId, amount, description, tx = prisma
   const run = async (txClient) => {
     const customer = await txClient.customer.findUnique({ where: { id: customerId } });
     if (!customer) throw httpError(404, 'Customer not found');
-    const balance = Number(customer.balance || 0);
-    if (balance <= 0) {
+    const balancePaisa = toPaisa(Number(customer.balance || 0));
+    if (balancePaisa <= 0) {
       throw httpError(400, 'No outstanding balance to pay');
     }
-    if (amount > balance) {
+    if (paisa > balancePaisa) {
       throw httpError(400, "Payment cannot exceed the customer's outstanding balance.");
     }
 
     const transaction = await txClient.khataTransaction.create({
       data: { customerId, type: 'PAYMENT', amount, description },
     });
-
     // For RETAIL customers, allocate the payment to unpaid KHATA sales using FIFO.
     // Each allocation increases the sale's recognizedAmount (revenue recognized).
     // For BUSINESS/PERSONAL customers, no sale allocation — manual debt
     // collections never affect product revenue, COGS, or profit.
     if (customer.type === 'RETAIL') {
-      let remaining = amount;
+      let remainingPaisa = paisa;
       // Fetch unpaid KHATA sales for this customer, oldest first.
       // A sale is "unpaid" when recognizedAmount < total.
       const unpaidSales = await txClient.sale.findMany({
@@ -82,35 +86,38 @@ export async function recordPayment(customerId, amount, description, tx = prisma
         },
         orderBy: { createdAt: 'asc' },
       });
-      // Filter in JS since Prisma doesn't support field-on-field comparison easily.
-      const trulyUnpaid = unpaidSales.filter((s) => Number(s.recognizedAmount || 0) < Number(s.total));
-      for (const sale of trulyUnpaid) {
-        if (remaining <= 0) break;
-        const saleTotal = Number(sale.total);
-        const recognized = Number(sale.recognizedAmount || 0);
-        const unpaidAmount = saleTotal - recognized;
-        const allocate = Math.min(remaining, unpaidAmount);
-        if (allocate <= 0) continue;
+      // Filter in JS to compare in integer paisa (avoid float residue).
+      const allocatable = [];
+      for (const sale of unpaidSales) {
+        const totalPaisa = toPaisa(Number(sale.total || 0));
+        const recognizedPaisa = toPaisa(Number(sale.recognizedAmount || 0));
+        const duePaisa = totalPaisa - recognizedPaisa;
+        if (duePaisa > 0) allocatable.push({ ...sale, duePaisa });
+      }
 
-        const newRecognized = recognized + allocate;
+      for (const sale of allocatable) {
+        if (remainingPaisa <= 0) break;
+        const allocatePaisa = Math.min(remainingPaisa, sale.duePaisa);
+        if (allocatePaisa <= 0) continue;
+        const newRecognizedPaisa = toPaisa(Number(sale.recognizedAmount || 0)) + allocatePaisa;
         await txClient.sale.update({
           where: { id: sale.id },
-          data: { recognizedAmount: newRecognized },
+          data: { recognizedAmount: fromPaisa(newRecognizedPaisa) },
         });
         await txClient.paymentAllocation.create({
           data: {
             paymentId: transaction.id,
             saleId: sale.id,
-            amount: allocate,
+            amount: fromPaisa(allocatePaisa),
           },
         });
-        remaining -= allocate;
+        remainingPaisa -= allocatePaisa;
       }
     }
 
     const updated = await txClient.customer.update({
       where: { id: customerId },
-      data: { balance: { decrement: amount } },
+      data: { balance: fromPaisa(balancePaisa - paisa) },
     });
     return { transaction, customer: updated };
   };
@@ -122,7 +129,8 @@ export async function recordPayment(customerId, amount, description, tx = prisma
  * Increases the customer's outstanding balance without creating a Sale.
  */
 export async function recordDebt(customerId, amount, description, tx = prisma) {
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const paisa = toPaisa(amount);
+  if (!Number.isFinite(amount) || paisa <= 0) {
     throw httpError(400, 'Amount must be a positive number');
   }
   if (amount > MAX_PAYMENT_AMOUNT) {
@@ -137,9 +145,10 @@ export async function recordDebt(customerId, amount, description, tx = prisma) {
     const transaction = await txClient.khataTransaction.create({
       data: { customerId, type: 'DEBT', amount, description },
     });
+    const newBalancePaisa = toPaisa(Number(customer.balance || 0)) + toPaisa(amount);
     const updated = await txClient.customer.update({
       where: { id: customerId },
-      data: { balance: { increment: amount } },
+      data: { balance: fromPaisa(newBalancePaisa) },
     });
     return { transaction, customer: updated };
   };
@@ -176,13 +185,13 @@ export async function getOutstanding() {
     orderBy: { balance: 'desc' },
     select: { id: true, name: true, phone: true, balance: true },
   });
-  const totalOutstanding = customers.reduce(
-    (sum, customer) => sum + Number(customer.balance || 0),
+  const totalOutstandingPaisa = customers.reduce(
+    (sumPaisa, customer) => sumPaisa + toPaisa(Number(customer.balance || 0)),
     0,
   );
   return {
     customers,
-    totalOutstanding: Number(totalOutstanding.toFixed(2)),
+    totalOutstanding: fromPaisa(totalOutstandingPaisa),
   };
 }
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { moneyAmount, withTwoDecimals } from '../utils/money.js';
 
 /**
  * Zod schema for creating a sale (POS transaction).
@@ -6,6 +7,8 @@ import { z } from 'zod';
  * - Exactly one of productId or manualName per item
  * - unitCost is accepted in payload but IGNORED by the service
  *   (client-supplied unitCost must never be trusted)
+ * - All monetary amounts (discount, unitPrice) allow at most 2 decimal
+ *   places via the moneyAmount() Zod helper.
  */
 export const createSaleSchema = z.object({
   paymentMethod: z.enum(['CASH', 'CARD', 'JAZZCASH', 'MOBILE', 'KHATA']),
@@ -14,7 +17,7 @@ export const createSaleSchema = z.object({
   // accepted (but does not create a ledger entry) for other payment methods.
   customerId: z.number().int().positive().optional(),
 
-  discount: z.number().min(0).default(0),
+  discount: withTwoDecimals(moneyAmount().min(0)).default(0),
 
   items: z
     .array(
@@ -22,7 +25,7 @@ export const createSaleSchema = z.object({
         productId: z.number().int().positive().optional(),
         manualName: z.string().max(100).optional(),
         quantity: z.number().int().positive(),
-        unitPrice: z.number().min(0),
+        unitPrice: withTwoDecimals(moneyAmount().min(0)),
         unitCost: z.number().optional(),
       })
     )

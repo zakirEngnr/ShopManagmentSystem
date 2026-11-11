@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { createSaleSchema } from '../schemas/sale.schema.js';
 import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
+import { add, multiply, subtract } from '../utils/money.js';
 import { formatInvoiceNo } from '../utils/invoiceNo.js';
 import { recordSale } from '../services/khata.service.js';
 import { PAYMENT_METHODS, INVOICE_PREFIX } from '../config/constants.js';
@@ -104,8 +105,8 @@ export async function createSale(userId, data) {
 
       for (const item of inventoryItems) {
         const product = productMap.get(item.productId);
-        const lineTotal = Number((item.unitPrice * item.quantity).toFixed(2));
-        subtotal = Number((subtotal + lineTotal).toFixed(2));
+        const lineTotal = multiply(item.unitPrice, item.quantity);
+        subtotal = add(subtotal, lineTotal);
         saleItemsData.push({
           saleId: -1,
           productId: item.productId,
@@ -118,8 +119,8 @@ export async function createSale(userId, data) {
       }
 
       for (const item of manualItems) {
-        const lineTotal = Number((item.unitPrice * item.quantity).toFixed(2));
-        subtotal = Number((subtotal + lineTotal).toFixed(2));
+        const lineTotal = multiply(item.unitPrice, item.quantity);
+        subtotal = add(subtotal, lineTotal);
         saleItemsData.push({
           saleId: -1,
           productId: null,
@@ -131,8 +132,8 @@ export async function createSale(userId, data) {
         });
       }
 
-      const discountValue = Number(Math.max(0, Number(discount) || 0).toFixed(2));
-      const totalValue = Math.max(0, Number((subtotal - discountValue).toFixed(2)));
+      const discountValue = Math.max(0, discount || 0);
+      const totalValue = Math.max(0, subtract(subtotal, discountValue));
 
       const now = new Date();
       const year = now.getFullYear();

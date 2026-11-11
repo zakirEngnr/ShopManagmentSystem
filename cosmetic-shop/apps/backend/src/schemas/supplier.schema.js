@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { moneyAmount, withTwoDecimals } from '../utils/money.js';
 
 export const createSupplierSchema = z
   .object({
@@ -12,7 +13,7 @@ export const createSupplierSchema = z
 
 export const recordSupplierPaymentSchema = z
   .object({
-    amount: z.number().finite().gt(0).max(1e9),
+    amount: withTwoDecimals(moneyAmount().gt(0).max(1e9)),
     description: z.string().trim().max(500).nullish(),
   })
   .strict();
