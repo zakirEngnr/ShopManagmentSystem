@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
+import { assertLocalDatabase, startBackupScheduler } from './services/backup.service.js';
 
 /**
  * Create the Express app and bind it to `host`:`port`.
@@ -11,6 +12,10 @@ import { logger } from './utils/logger.js';
  * those are only installed by the entrypoint below.
  */
 export function startServer({ port = env.PORT, host = env.HOST } = {}) {
+  // Backups require a local file database. Fail fast at startup with a clear
+  // message instead of silently skipping backups on a remote libSQL DB.
+  assertLocalDatabase();
+
   const app = createApp();
   const server = app.listen(port, host, () => {
     const addr = server.address();
@@ -18,6 +23,10 @@ export function startServer({ port = env.PORT, host = env.HOST } = {}) {
       `backend listening on http://${addr.address}:${addr.port} (${env.NODE_ENV})`,
     );
   });
+
+  // Automatic backup schedule: immediate check, then every 24 hours (unref'd).
+  startBackupScheduler();
+
   return server;
 }
 

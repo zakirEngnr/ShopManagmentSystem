@@ -26,6 +26,9 @@ release/
 *backup*.db
 *.db.bak*
 
+# Backups directory (created at runtime by the backup service)
+apps/backend/backups/
+
 # Uploads (user-generated)
 apps/backend/uploads/*
 !apps/backend/uploads/.gitkeep
