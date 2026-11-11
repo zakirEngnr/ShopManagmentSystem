@@ -16,11 +16,15 @@ release/
 
 # Database files
 *.db
+*.db.*
 *.db-journal
 *.db-wal
 *.db-shm
 *.sqlite
-*.sqlite3
+*.sqlite*
+*.BACKUP*
+*backup*.db
+*.db.bak*
 
 # Uploads (user-generated)
 apps/backend/uploads/*

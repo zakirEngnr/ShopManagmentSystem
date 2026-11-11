@@ -20,6 +20,15 @@ async function main() {
   const adminEmail = requireEnv('ADMIN_EMAIL');
   const adminPassword = requireEnv('ADMIN_PASSWORD');
 
+  const ADMIN_PASSWORD_PLACEHOLDER = 'CHANGE_ME_at_least_12_characters';
+  if (adminPassword === ADMIN_PASSWORD_PLACEHOLDER) {
+    throw new Error(
+      'ADMIN_PASSWORD is still set to the .env.example placeholder. Generate a real secret ' +
+      'with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))" ' +
+      'and set ADMIN_PASSWORD to a value at least 12 characters long.',
+    );
+  }
+
   if (adminPassword.length < 12) {
     throw new Error('ADMIN_PASSWORD must be at least 12 characters');
   }

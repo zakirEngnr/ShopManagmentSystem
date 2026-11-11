@@ -27,19 +27,52 @@ if (typeof HOST !== 'string' || HOST.trim() === '') {
 }
 
 const JWT_SECRET = required('JWT_SECRET');
-if (JWT_SECRET.length < 32) {
-  throw new Error('JWT_SECRET must be at least 32 characters');
+
+// Known values that must never be used in production. If the owner is still
+// using one of them (for example after copying .env.example without editing),
+// print a rotation banner to stderr and keep serving instead of crashing, so
+// the owner can rotate at their own pace. Every other placeholder-like value
+// is still rejected below.
+const KNOWN_JWT_SECRET_VALUES = [
+  '4e282daeb2ec134b89026155b58cf5ce32eccf14ae03011b538042c38af54aa2182dd93a', // previous .env.example value
+  'CHANGE_ME_generate_with_node_-e_crypto_randomBytes_48_hex', // current .env.example placeholder
+];
+
+function printJwtSecretRotateBanner() {
+  const lines = [
+    'ROTATE YOUR JWT SECRET',
+    'The JWT_SECRET is still set to a known example or placeholder value.',
+    'Generate a new secret:',
+    '  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"',
+    'Then update .env and restart the server. All users must log in again.',
+  ];
+  process.stderr.write(lines.join('\n') + '\n');
 }
-if (JWT_SECRET.includes('CHANGE') || JWT_SECRET.includes('dev-secret')) {
-  throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
+
+let jwtSecretNeedsRotation = false;
+for (const known of KNOWN_JWT_SECRET_VALUES) {
+  if (JWT_SECRET === known) {
+    printJwtSecretRotateBanner();
+    jwtSecretNeedsRotation = true;
+    break;
+  }
 }
-const secretUpper = JWT_SECRET.toUpperCase();
-if (
-  secretUpper.includes('REPLACE_WITH') ||
-  secretUpper.includes('PLACEHOLDER') ||
-  secretUpper.includes('EXAMPLE')
-) {
-  throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
+
+if (!jwtSecretNeedsRotation) {
+  if (JWT_SECRET.length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 characters');
+  }
+  if (JWT_SECRET.includes('CHANGE') || JWT_SECRET.includes('dev-secret')) {
+    throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
+  }
+  const secretUpper = JWT_SECRET.toUpperCase();
+  if (
+    secretUpper.includes('REPLACE_WITH') ||
+    secretUpper.includes('PLACEHOLDER') ||
+    secretUpper.includes('EXAMPLE')
+  ) {
+    throw new Error('JWT_SECRET appears to be a placeholder; generate a real secret');
+  }
 }
 
 export const env = Object.freeze({
