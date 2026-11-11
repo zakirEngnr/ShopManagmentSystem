@@ -729,3 +729,124 @@ test('daily report defaults to today', async () => {
   assert.equal(res.body.report.revenue, 42);
 });
 
+
+// ---------------------------------------------------------------------------
+// T19. Accrual rule for KHATA sales: revenue counted on sale date, not on payment
+// ---------------------------------------------------------------------------
+test('T19 accrual rule: KHATA sale revenue counted on sale date', async () => {
+  // Create a product: sellPrice 1000, costPrice 600
+  const product = await prisma.product.create({
+    data: {
+      sku: 'RP-ACCR-1',
+      name: 'Accrual Product',
+      type: 'COSMETIC',
+      costPrice: 600,
+      sellPrice: 1000,
+      stock: 100,
+      lowStockAt: 5,
+      categoryId,
+    },
+  });
+
+  // Create a RETAIL customer for the KHATA sale
+  const customer = await prisma.customer.create({
+    data: { name: 'Accrual Customer', phone: '+923009999999', type: 'RETAIL' },
+  });
+
+  // Create a KHATA sale for Rs. 1,000 (cost Rs. 600) on 2025-03-01
+  const sale = await prisma.sale.create({
+    data: {
+      invoiceNo: 'INV-ACCR-1',
+      subtotal: 1000,
+      discount: 0,
+      total: 1000,
+      recognizedAmount: 0, // KHATA: nothing collected yet
+      paymentMethod: 'KHATA',
+      customerId: customer.id,
+      createdAt: new Date(Date.UTC(2025, 2, 1, 10, 0, 0)), // 2025-03-01
+    },
+  });
+
+  // Create the khata ledger entry (SALE) and increment customer balance
+  await prisma.khataTransaction.create({
+    data: {
+      customerId: customer.id,
+      type: 'SALE',
+      amount: 1000,
+      description: 'Credit sale INV-ACCR-1',
+      saleId: sale.id,
+      createdAt: new Date(Date.UTC(2025, 2, 1, 10, 0, 0)),
+    },
+  });
+  await prisma.customer.update({
+    where: { id: customer.id },
+    data: { balance: { increment: 1000 } },
+  });
+
+  // Create the sale item with historical unitCost = 600
+  await prisma.saleItem.create({
+    data: {
+      saleId: sale.id,
+      productId: product.id,
+      quantity: 1,
+      unitPrice: 1000,
+      unitCost: 600,
+      total: 1000,
+    },
+  });
+
+  // ---- (a) March report: revenue = 1000, COGS = 600, profit = 400 ----
+  const marRes = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2025-03-01' },
+  });
+  assert.equal(marRes.status, 200, JSON.stringify(marRes.body));
+  const marReport = marRes.body.report;
+  assert.equal(marReport.revenue, 1000, `March revenue: ${marReport.revenue}`);
+  assert.equal(marReport.cogs, 600, `March COGS: ${marReport.cogs}`);
+  assert.equal(marReport.grossProfit, 400, `March gross profit: ${marReport.grossProfit}`);
+  assert.equal(marReport.netProfit, 400, `March net profit: ${marReport.netProfit}`);
+
+  // ---- (b) March report: collected = 0, outstanding = 1000 ----
+  assert.equal(marReport.collected, 0, `March collected: ${marReport.collected}`);
+  assert.equal(marReport.outstanding, 1000, `March outstanding: ${marReport.outstanding}`);
+
+  // ---- Record a Rs. 1,000 payment on 2025-04-20 ----
+  const paymentTx = await prisma.khataTransaction.create({
+    data: {
+      customerId: customer.id,
+      type: 'PAYMENT',
+      amount: 1000,
+      description: 'Payment for INV-ACCR-1',
+      createdAt: new Date(Date.UTC(2025, 3, 20, 10, 0, 0)), // 2025-04-20
+    },
+  });
+  // Allocate the payment to the KHATA sale (FIFO)
+  await prisma.sale.update({
+    where: { id: sale.id },
+    data: { recognizedAmount: 1000 },
+  });
+  await prisma.paymentAllocation.create({
+    data: {
+      paymentId: paymentTx.id,
+      saleId: sale.id,
+      amount: 1000,
+    },
+  });
+  // Decrement customer balance
+  await prisma.customer.update({
+    where: { id: customer.id },
+    data: { balance: { decrement: 1000 } },
+  });
+
+  // ---- (c) April report: revenue = 0 (no new sales), collected = 1000 ----
+  const aprRes = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2025-04-20' },
+  });
+  assert.equal(aprRes.status, 200, JSON.stringify(aprRes.body));
+  const aprReport = aprRes.body.report;
+  assert.equal(aprReport.revenue, 0, `April revenue: ${aprReport.revenue}`);
+  assert.equal(aprReport.collected, 1000, `April collected: ${aprReport.collected}`);
+  assert.equal(aprReport.outstanding, 0, `April outstanding: ${aprReport.outstanding}`);
+});

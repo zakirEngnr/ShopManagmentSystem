@@ -56,36 +56,60 @@ function utcDateString() {
 /**
  * Aggregate sale totals within inclusive UTC boundaries [gte, lte].
  *
- * Accounting semantics (per the sale service):
+ * Accounting semantics (accrual rule):
+ * - Revenue, discount and COGS for EVERY sale (cash or khata) are counted on
+ *   the sale date using Sale.total.
  * - Sale.subtotal is the pre-discount sales amount  -> revenue
  * - Sale.discount is the discount actually applied   -> discount
  * - Sale.total is subtotal minus discount            -> net sales
- * Net sales is therefore revenue minus discount; the discount is never
- * applied a second time.
+ * - Collected = money actually received in the period:
+ *     * Full total for non-KHATA sales (paid at sale time) → sale date
+ *     * Payment amounts for KHATA sales (paid later) → payment date
+ *   recognizedAmount and payment allocations are kept untouched as a record of
+ *   how much has been COLLECTED; they do NOT affect revenue or profit.
+ * - Outstanding = amount still owed on KHATA sales created in the period:
+ *     SUM(total - recognizedAmount) for KHATA sales where sale date in period.
  */
 async function aggregateSales(gte, lte) {
   const rows = await prisma.$queryRawUnsafe(
     `SELECT
        COUNT(*) AS salesCount,
+       COALESCE(SUM(s."total"), 0) AS revenue,
+       COALESCE(SUM(s."discount"), 0) AS discount,
        COALESCE(SUM(
          CASE WHEN s."paymentMethod" != 'KHATA'
            THEN s."total"
-           ELSE s."recognizedAmount"
+           ELSE 0
          END
-       ), 0) AS revenue,
-       COALESCE(SUM(s."discount"), 0) AS discount
+       ), 0) +
+       COALESCE((
+         SELECT SUM(kt."amount")
+         FROM "KhataTransaction" kt
+         WHERE kt."type" = 'PAYMENT'
+           AND kt."createdAt" >= ? AND kt."createdAt" <= ?
+       ), 0) AS collected,
+       COALESCE(SUM(
+         CASE WHEN s."paymentMethod" = 'KHATA'
+           THEN s."total" - s."recognizedAmount"
+           ELSE 0
+         END
+       ), 0) AS outstanding
      FROM "Sale" s
      WHERE s."createdAt" >= ? AND s."createdAt" <= ?`,
-    gte,
-    lte,
+    gte, lte, // for the collected subquery (payment date range)
+    gte, lte, // for the main query (sale date range)
   );
   const row = rows[0];
   const revenuePaisa = toPaisa(row?.revenue ?? 0);
   const discountPaisa = toPaisa(row?.discount ?? 0);
+  const collectedPaisa = toPaisa(row?.collected ?? 0);
+  const outstandingPaisa = toPaisa(row?.outstanding ?? 0);
   return {
     salesCount: Number(row?.salesCount ?? 0),
     revenue: fromPaisa(revenuePaisa),
     discount: fromPaisa(discountPaisa),
+    collected: fromPaisa(collectedPaisa),
+    outstanding: fromPaisa(outstandingPaisa),
   };
 }
 
@@ -145,9 +169,7 @@ export async function getDailyReport(dateString) {
   const gte = startOfDayUtc(date);
   const lte = endOfDayUtc(date);
 
-  const { salesCount, revenue, discount } = await aggregateSales(gte, lte);
-  // recognizedAmount is already net of discount (based on Sale.total),
-  // so netSales equals recognized revenue.
+  const { salesCount, revenue, discount, collected, outstanding } = await aggregateSales(gte, lte);
   const netSales = revenue;
   const cogs = await aggregateCogs(gte, lte);
   const expenses = await aggregateExpenses(gte, lte);
@@ -159,6 +181,8 @@ export async function getDailyReport(dateString) {
     salesCount,
     revenue,
     discount,
+    collected,
+    outstanding,
     netSales,
     cogs,
     grossProfit,
@@ -183,7 +207,7 @@ export async function getPnlReport(fromDate, toDate) {
   const gte = startOfDayUtc(from);
   const lte = endOfDayUtc(to);
 
-  const { revenue, discount } = await aggregateSales(gte, lte);
+  const { revenue, discount, collected, outstanding } = await aggregateSales(gte, lte);
   const netSales = revenue;
   const cogs = await aggregateCogs(gte, lte);
   const expenses = await aggregateExpenses(gte, lte);
@@ -195,6 +219,8 @@ export async function getPnlReport(fromDate, toDate) {
     to,
     revenue,
     discount,
+    collected,
+    outstanding,
     netSales,
     cogs,
     grossProfit,

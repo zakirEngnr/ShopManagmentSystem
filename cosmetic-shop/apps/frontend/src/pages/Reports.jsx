@@ -77,7 +77,7 @@ const PRESETS = [
 ];
 
 const getInitialPnl = () => ({
-  revenue: null, discount: null, netSales: null, cogs: null, grossProfit: null, expenses: null, netProfit: null,
+  revenue: null, discount: null, collected: null, outstanding: null, netSales: null, cogs: null, grossProfit: null, expenses: null, netProfit: null,
 });
 
 export default function Reports() {
@@ -156,7 +156,7 @@ export default function Reports() {
   const isBreakEven = typeof netProfit === 'number' && netProfit === 0;
 
   const statCards = [
-    { label: 'Revenue', value: pnl.revenue, format: formatCurrency, color: 'text-emerald-600', bg: 'bg-emerald-100', gradient: 'from-emerald-400 to-teal-500', border: 'border-slate-200', Icon: DollarSign },
+    { label: 'Net sales (including credit sales)', value: pnl.revenue, format: formatCurrency, color: 'text-emerald-600', bg: 'bg-emerald-100', gradient: 'from-emerald-400 to-teal-500', border: 'border-slate-200', Icon: DollarSign },
     { label: 'Cost of Goods', value: pnl.cogs, format: formatCurrency, color: 'text-amber-600', bg: 'bg-amber-100', gradient: 'from-amber-400 to-orange-500', border: 'border-slate-200', Icon: Factory },
     { label: 'Expenses', value: pnl.expenses, format: formatCurrency, color: 'text-orange-600', bg: 'bg-orange-100', gradient: 'from-orange-400 to-red-500', border: 'border-slate-200', Icon: ReceiptText },
     { label: isLoss ? 'Net Loss' : 'Net Profit', value: pnl.netProfit, format: formatCurrency, color: isLoss ? 'text-red-600' : 'text-indigo-600', bg: isLoss ? 'bg-red-100' : 'bg-indigo-100', gradient: isLoss ? 'from-red-400 to-red-600' : 'from-indigo-400 to-purple-500', border: isLoss ? 'border-slate-200' : 'border-slate-200', Icon: isLoss ? TrendingDown : TrendingUp },
@@ -242,7 +242,7 @@ export default function Reports() {
         <div className="p-6">
           <div className="space-y-4 max-w-2xl mx-auto">
             <div className="flex justify-between items-center text-sm">
-              <span className="text-[var(--app-muted)] font-medium">Revenue (Subtotal)</span>
+              <span className="text-[var(--app-muted)] font-medium">Net sales (including credit sales)</span>
               <span className="font-bold text-[var(--app-text)] font-mono">{formatCurrency(pnl.revenue)}</span>
             </div>
             <div className="flex justify-between items-center text-sm">
@@ -301,7 +301,7 @@ export default function Reports() {
                   <th className="px-6 py-4 text-xs font-bold text-[var(--app-muted)] uppercase tracking-wider w-20">Rank</th>
                   <th className="px-6 py-4 text-xs font-bold text-[var(--app-muted)] uppercase tracking-wider">Product</th>
                   <th className="px-6 py-4 text-xs font-bold text-[var(--app-muted)] uppercase tracking-wider text-right">Qty Sold</th>
-                  <th className="px-6 py-4 text-xs font-bold text-[var(--app-muted)] uppercase tracking-wider text-right">Revenue</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--app-muted)] uppercase tracking-wider text-right">Net sales</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--app-border)]">

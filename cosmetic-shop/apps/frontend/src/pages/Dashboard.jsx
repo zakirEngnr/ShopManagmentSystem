@@ -259,7 +259,7 @@ export default function Dashboard() {
   const referenceDate = report?.date || null;
 
   const statCards = [
-    { label: 'Revenue Today', value: report?.revenue, format: formatCurrency, color: 'text-emerald-600', bg: 'bg-emerald-100', gradient: 'from-emerald-400/20 to-teal-500/0', border: 'border-[var(--app-border)]', Icon: DollarSign },
+    { label: 'Net sales today (incl. credit)', value: report?.revenue, format: formatCurrency, color: 'text-emerald-600', bg: 'bg-emerald-100', gradient: 'from-emerald-400/20 to-teal-500/0', border: 'border-[var(--app-border)]', Icon: DollarSign },
     { label: 'Net Profit', value: report?.netProfit, format: formatCurrency, color: 'text-indigo-600', bg: 'bg-indigo-100', gradient: 'from-indigo-400/20 to-purple-500/0', border: 'border-[var(--app-border)]', Icon: TrendingUp },
     { label: 'Total Sales', value: report?.salesCount, format: formatCount, color: 'text-blue-600', bg: 'bg-blue-100', gradient: 'from-blue-400/20 to-cyan-500/0', border: 'border-[var(--app-border)]', Icon: ShoppingCart },
     { label: 'Total Expenses', value: report?.expenses, format: formatCurrency, color: 'text-amber-600', bg: 'bg-amber-100', gradient: 'from-amber-400/20 to-orange-500/0', border: 'border-[var(--app-border)]', Icon: ReceiptText },
