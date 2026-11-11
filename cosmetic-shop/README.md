@@ -38,6 +38,21 @@ profit.
 Manual debt entries for BUSINESS/PERSONAL customers do **not** affect revenue,
 COGS, or profit.
 
+### Discount Cap
+
+The applied discount on any sale is capped at the subtotal:
+
+- **Backend:** `appliedDiscount = min(discount, subtotal)`, stored in
+  `Sale.discount`. A KHATA sale whose total would be 0 returns a clear 400
+  error instead of a 500.
+- **Frontend (POS):** The bill discount input has `max={subtotal}`, clamps
+  values (including paste) that exceed the subtotal down to the subtotal, and
+  shows an inline warning: "Discount cannot exceed the subtotal (Rs. X)".
+  The submitted value is always the clamped value.
+
+This prevents oversized discounts from inflating report discount totals or
+creating zero-total credit sales.
+
 ### Worked Example
 
 A Rs. 1,000 credit sale (cost Rs. 600) is made on **1 March**. The customer
