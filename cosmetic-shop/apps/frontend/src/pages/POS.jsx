@@ -70,6 +70,7 @@ export default function POS() {
   const [tempPrice, setTempPrice] = useState('');
 
   const [billDiscount, setBillDiscount] = useState('');
+  const [billDiscountWarning, setBillDiscountWarning] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -580,8 +581,34 @@ export default function POS() {
                       type="number"
                       min="0"
                       value={billDiscount}
+                      max={subtotalPaisa / 100}
                       onChange={(e) => {
-                        const nextValue = e.target.value === '' ? '' : Number(e.target.value);
+                        const raw = e.target.value === '' ? '' : Number(e.target.value);
+                        let nextValue = raw;
+                        if (typeof nextValue === 'number' && nextValue > subtotalPaisa / 100) {
+                          nextValue = subtotalPaisa / 100;
+                          setBillDiscountWarning(
+                            `Discount cannot exceed the subtotal (Rs. ${toRupees(subtotalPaisa).toLocaleString()}).`,
+                          );
+                        } else {
+                          setBillDiscountWarning(null);
+                        }
+                        setBillDiscount(nextValue);
+                        setCheckoutError(null);
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const text = (e.clipboardData || window.clipboardData).getData('text');
+                        const raw = text === '' || text === null ? '' : Number(text);
+                        let nextValue = raw;
+                        if (typeof nextValue === 'number' && nextValue > subtotalPaisa / 100) {
+                          nextValue = subtotalPaisa / 100;
+                          setBillDiscountWarning(
+                            `Discount cannot exceed the subtotal (Rs. ${toRupees(subtotalPaisa).toLocaleString()}).`,
+                          );
+                        } else {
+                          setBillDiscountWarning(null);
+                        }
                         setBillDiscount(nextValue);
                         setCheckoutError(null);
                       }}
@@ -589,6 +616,9 @@ export default function POS() {
                       placeholder="0"
                     />
                   </div>
+                  {billDiscountWarning && (
+                    <p className="text-xs text-red-600 font-medium mt-1">{billDiscountWarning}</p>
+                  )}
                 </div>
               </div>
 

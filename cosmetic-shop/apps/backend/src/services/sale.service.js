@@ -132,8 +132,17 @@ export async function createSale(userId, data) {
         });
       }
 
-      const discountValue = Math.max(0, discount || 0);
-      const totalValue = Math.max(0, subtract(subtotal, discountValue));
+      // Cap the applied discount at the subtotal (defense-in-depth). The
+      // frontend also clamps the bill discount to the subtotal, but the
+      // backend must enforce it regardless of what the client sends.
+      const appliedDiscount = Math.min(Math.max(0, discount || 0), subtotal);
+      const totalValue = Math.max(0, subtract(subtotal, appliedDiscount));
+
+      // A KHATA sale with a total of 0 means the customer owes nothing; that
+      // is not a valid credit sale. Reject with a clear 400 instead of a 500.
+      if (paymentMethod === 'KHATA' && totalValue <= 0) {
+        throw httpError(400, 'KHATA sale total cannot be zero: discount cannot exceed the subtotal.');
+      }
 
       const now = new Date();
       const year = now.getFullYear();
@@ -154,7 +163,7 @@ export async function createSale(userId, data) {
         data: {
           invoiceNo,
           subtotal: Number(subtotal.toFixed(2)),
-          discount: discountValue,
+          discount: appliedDiscount,
           total: totalValue,
           // Recognized revenue: immediate for non-KHATA (paid at sale time),
           // deferred for KHATA (recognized as payments are collected).

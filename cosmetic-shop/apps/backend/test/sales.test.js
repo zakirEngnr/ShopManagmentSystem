@@ -452,3 +452,50 @@ test('20 manual items are added to subtotal without stock changes', async () => 
   assert.equal(await prisma.product.count(), before);
   assert.equal(await prisma.sale.count(), beforeSales + 1);
 });
+test('21 discount larger than subtotal is capped at subtotal (cash sale, total = 0)', async () => {
+  const product = await createProduct({ name: 'Cap Discount Product', stock: 8, sku: 'SALE-CAP-1' });
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'CASH',
+      discount: 999,
+      items: [{ productId: product.id, quantity: 1, unitPrice: 10 }],
+    },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.sale.subtotal, 10);
+  assert.equal(res.body.sale.discount, 10, 'discount should be capped at subtotal');
+  assert.equal(res.body.sale.total, 0, 'total should be 0 when discount equals subtotal');
+});
+
+test('22 KHATA sale whose total would be 0 returns 400 (not 500)', async () => {
+  const product = await createProduct({ name: 'Zero Total KHATA', stock: 8, sku: 'SALE-ZERO-1' });
+  const customer = await prisma.customer.create({
+    data: { name: 'KHATA Customer', phone: '03000000000', type: 'RETAIL' },
+  });
+
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'KHATA',
+      customerId: customer.id,
+      discount: 999,
+      items: [{ productId: product.id, quantity: 1, unitPrice: 10 }],
+    },
+  });
+
+  assert.equal(res.status, 400, 'KHATA sale with zero total should return 400, not 500');
+  assert.ok(
+    res.body.error && res.body.error.message,
+    '400 response should include an error message',
+  );
+  assert.ok(
+    res.body.error.message.toLowerCase().includes('subtotal') ||
+      res.body.error.message.toLowerCase().includes('zero'),
+    'error message should name the reason (discount/subtotal)',
+  );
+  // Verify no sale row was created (compare count before/after)
+  const saleCountBefore = await prisma.sale.count();
+  assert.equal(await prisma.sale.count(), saleCountBefore, 'no sale row should be created for rejected KHATA sale');
+});
