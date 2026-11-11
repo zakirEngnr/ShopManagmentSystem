@@ -21,6 +21,11 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error(`Invalid PORT: ${PORT_RAW}`);
 }
 
+const HOST = optional('HOST', '127.0.0.1');
+if (typeof HOST !== 'string' || HOST.trim() === '') {
+  throw new Error('HOST must be a non-empty hostname or IP address');
+}
+
 const JWT_SECRET = required('JWT_SECRET');
 if (JWT_SECRET.length < 32) {
   throw new Error('JWT_SECRET must be at least 32 characters');
@@ -41,6 +46,7 @@ export const env = Object.freeze({
   NODE_ENV,
   IS_PROD: NODE_ENV === 'production',
   PORT,
+  HOST,
   DATABASE_URL: required('DATABASE_URL'),
   JWT_SECRET,
   UPLOAD_DIR: optional('UPLOAD_DIR', './uploads'),
