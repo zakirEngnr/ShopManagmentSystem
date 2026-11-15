@@ -1,5 +1,10 @@
 import { parse, parseId } from '../middleware/validate.js';
-import { productCreateSchema, productUpdateSchema, productQuerySchema } from '../schemas/product.schema.js';
+import {
+  productCreateSchema,
+  productUpdateSchema,
+  productQuerySchema,
+  barcodeParamSchema,
+} from '../schemas/product.schema.js';
 import { validateImageBuffer } from '../middleware/upload.js';
 import { httpError } from '../utils/prismaErrors.js';
 import * as productService from '../services/product.service.js';
@@ -18,6 +23,26 @@ export async function detail(req, res, next) {
   try {
     const id = parseId(req.params);
     const row = await productService.getProductById(id);
+    res.json({ ok: true, product: row });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Look a product up by its exact barcode.
+ *
+ * Backend contract (GET /api/products/barcode/:barcode):
+ *   Response (200): { ok: true, product } - the product without its cost
+ *                    price, which the POS does not need.
+ *   Response (404): { ok: false, error: { message } } - no product carries
+ *                    that barcode.
+ *   Response (400): the barcode is empty or longer than 40 characters.
+ */
+export async function byBarcode(req, res, next) {
+  try {
+    const { barcode } = parse(barcodeParamSchema, req.params);
+    const row = await productService.getProductByBarcode(barcode);
     res.json({ ok: true, product: row });
   } catch (err) {
     next(err);
@@ -73,5 +98,5 @@ export async function uploadImage(req, res, next) {
   }
 }
 
-export default { list, detail, create, update, remove, uploadImage };
+export default { list, detail, byBarcode, create, update, remove, uploadImage };
 

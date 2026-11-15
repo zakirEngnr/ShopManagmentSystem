@@ -1,4 +1,4 @@
-import client from './client';
+import client from './client.js';
 
 function normalizeExpenseListResponse(data) {
   if (!data || data.ok !== true || !Array.isArray(data.items)) {
@@ -68,4 +68,50 @@ export async function deleteExpense(id) {
   }
 
   return true;
+}
+
+export async function restoreExpense(id) {
+  if (id == null) throw new Error('Expense id is required.');
+
+  const res = await client.post(`/expenses/${id}/restore`);
+  const body = res.data;
+
+  if (!body || body.ok !== true || !body.expense || typeof body.expense !== 'object') {
+    throw new Error('Malformed restore expense response');
+  }
+
+  return body.expense;
+}
+
+/**
+ * Update an existing expense via PATCH.
+ *
+ * Only the fields that changed are sent, so unrelated values are preserved.
+ *
+ * @param {number|string} id - The expense id.
+ * @param {object} data - Partial expense fields (date, category, expenseName, description, amount).
+ * @returns {object} The updated expense.
+ * @throws When the expense is not found (404), validation fails (400) or the
+ *   response is malformed.
+ */
+export async function updateExpense(id, data) {
+  if (id == null) throw new Error('Expense id is required.');
+
+  const payload = {};
+  if (data.date !== undefined) payload.date = data.date;
+  if (data.category !== undefined) payload.category = data.category;
+  if (data.expenseName !== undefined)
+    payload.expenseName = data.expenseName === null ? null : String(data.expenseName).trim() || null;
+  if (data.description !== undefined)
+    payload.description = data.description === null ? null : String(data.description).trim();
+  if (data.amount !== undefined) payload.amount = Number(data.amount);
+
+  const res = await client.patch(`/expenses/${id}`, payload);
+  const body = res.data;
+
+  if (!body || body.ok !== true || !body.expense || typeof body.expense !== 'object') {
+    throw new Error('Malformed update expense response');
+  }
+
+  return body.expense;
 }

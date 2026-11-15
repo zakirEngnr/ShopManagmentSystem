@@ -1,8 +1,12 @@
 // Shared temp-DB helper for backend integration tests.
 //
 // Safety contract:
-// - throwaway SQLite file under fs.realpathSync(os.tmpdir()) only
-// - DATABASE_URL is set to the temp file and asserted equal after import
+// - the throwaway SQLite file lives inside the designated test database
+//   directory (<os.tmpdir()>/cosmetic-shop-backend-tests/), never anywhere else
+// - DATABASE_URL is validated with the shared guard before it is set and
+//   again after the Prisma client has been imported
+// - the development database (shop.db), its backups and its WAL/SHM side files
+//   are refused explicitly
 // - every prisma/migrations/* folder is applied in sorted order
 // - only allow-listed migration statements are executed:
 //   CREATE TABLE / CREATE (UNIQUE) INDEX (initial schema),
@@ -21,12 +25,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import {
+  TEST_DB_ROOT,
+  assertIsolatedDatabaseUrl,
+  ensureTestDbRoot,
+  protectedReason,
+  resolveDatabaseUrl,
+} from './dbGuard.js';
 
 function abortIfNotTmpDb(url, realTmp) {
-  const resolved = path.resolve(String(url).replace(/^file:/, ''));
-  if (!resolved.startsWith(realTmp + path.sep)) {
-    throw new Error('refusing to run: DATABASE_URL is not inside os.tmpdir()');
-  }
+  // The guard is the single source of truth: it rejects a missing URL, a URL
+  // outside the designated test directory and the development database.
+  assertIsolatedDatabaseUrl(url, { roots: [TEST_DB_ROOT, realTmp].filter(Boolean) });
 }
 
 function splitStatements(sql) {
@@ -65,14 +75,16 @@ function isTableRebuildStatement(s) {
 }
 
 /**
- * Create a temp dir + temp SQLite file, point DATABASE_URL at it, and apply
- * every migration folder (sorted) via $executeRawUnsafe after asserting each
- * statement is allow-listed (see isAllowedMigrationStatement).
+ * Create a temp dir + temp SQLite file inside the designated test database
+ * directory, point DATABASE_URL at it, and apply every migration folder
+ * (sorted) via $executeRawUnsafe after asserting each statement is
+ * allow-listed (see isAllowedMigrationStatement).
  * Returns { tmpDir, dbFile, dbUrl, realTmp, cleanup }.
  */
 export async function createTempDb({ prefix, backendDir }) {
   const realTmp = fs.realpathSync(os.tmpdir());
-  const tmpDir = fs.mkdtempSync(path.join(realTmp, prefix));
+  ensureTestDbRoot();
+  const tmpDir = fs.mkdtempSync(path.join(TEST_DB_ROOT, prefix));
   const dbFile = path.join(tmpDir, 'test.db');
   const dbUrl = `file:${dbFile}`;
   abortIfNotTmpDb(dbUrl, realTmp);
@@ -97,6 +109,8 @@ export async function createTempDb({ prefix, backendDir }) {
       throw new Error('refusing to run: DATABASE_URL was changed during prisma import');
     }
     assert.equal(process.env.DATABASE_URL, dbUrl);
+    // The client must still point at the isolated file after the import.
+    abortIfNotTmpDb(process.env.DATABASE_URL, realTmp);
 
     const prismaBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
     execFileSync(
@@ -110,6 +124,7 @@ export async function createTempDb({ prefix, backendDir }) {
       ],
       {
         cwd: backendDir,
+        // The child process inherits the isolated DATABASE_URL explicitly.
         env: { ...process.env, DATABASE_URL: dbUrl, UPLOAD_DIR: uploadDir },
         stdio: 'inherit',
       },
@@ -126,3 +141,5 @@ export async function createTempDb({ prefix, backendDir }) {
 export function assertTmpDbUrl(url, realTmp) {
   abortIfNotTmpDb(url, realTmp ?? fs.realpathSync(os.tmpdir()));
 }
+
+export { assertIsolatedDatabaseUrl, protectedReason, resolveDatabaseUrl, TEST_DB_ROOT };

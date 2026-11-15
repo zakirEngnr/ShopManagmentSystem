@@ -9,5 +9,6 @@ router.get('/', requireAuth, expenseController.list);
 router.get('/:id', requireAuth, expenseController.get);
 router.patch('/:id', requireAuth, expenseController.update);
 router.delete('/:id', requireAuth, expenseController.remove);
+router.post('/:id/restore', requireAuth, expenseController.restore);
 
 export default router;

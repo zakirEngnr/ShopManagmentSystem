@@ -107,9 +107,16 @@ test('POST /api/backups creates a verified backup and GET lists it', async () =>
   const createRes = await call('POST', '/api/backups', { token });
   assert.equal(createRes.status, 201);
   assert.equal(createRes.body.ok, true);
-  assert.ok(createRes.body.backup.filename.match(/^shop-\d{8}-\d{6}\.db$/));
+  // The canonical name of a backup carries a millisecond precision, so two
+  // backups of the same second can never collide.
+  assert.ok(
+    createRes.body.backup.filename.match(/^shop-\d{8}-\d{6}(-\d{3})?\.db$/),
+    `the backup must use the canonical name, got ${createRes.body.backup.filename}`,
+  );
   assert.ok(createRes.body.backup.size > 0);
   assert.ok(createRes.body.backup.createdAt);
+  assert.equal(createRes.body.backup.verified, true, 'the backup must be published only after it was verified');
+  assert.match(createRes.body.backup.sha256, /^[0-9a-f]{64}$/, 'the backup must carry its checksum');
 
   const file = path.join(backupRoot, createRes.body.backup.filename);
   assert.ok(fs.existsSync(file), 'backup file exists on disk');

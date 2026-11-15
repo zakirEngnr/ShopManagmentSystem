@@ -1,0 +1,19 @@
+-- Add the cash tender to Sale.
+--
+-- `cashReceived` records what the customer actually handed over for a CASH
+-- sale. It is deliberately NULLABLE:
+--
+--   * every sale that was not paid in cash (CARD, JAZZCASH, MOBILE, KHATA)
+--     stores NULL;
+--   * every sale that existed before this migration keeps NULL, so no
+--     historical row has to be rewritten.
+--
+-- The column is added with ALTER TABLE ... ADD COLUMN, so the table is NOT
+-- rebuilt, no row is deleted and no historical `total` or `recognizedAmount`
+-- is modified. Existing sales stay valid and stay readable with
+-- `cashReceived = NULL`.
+--
+-- The amount is a REAL (rupees). The service compares the tender and the
+-- sale total in integer paisa before the row is written, so the stored value
+-- is never used for a money comparison.
+ALTER TABLE "Sale" ADD COLUMN "cashReceived" REAL;

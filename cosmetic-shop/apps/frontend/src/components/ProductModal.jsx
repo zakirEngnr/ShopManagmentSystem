@@ -22,10 +22,28 @@ const createEmptyForm = () => ({
   stock: '',
   lowStockAt: 5,
   expiryDate: '',
+  productType: 'COSMETIC',
 });
 
 export default function ProductModal({ isOpen, onClose, product, onSaved, categories, brands }) {
-  const [formData, setFormData] = useState(createEmptyForm());
+  const [formData, setFormData] = useState(() => {
+    if (product) {
+      return {
+        name: product.name || '',
+        sku: product.sku || '',
+        barcode: product.barcode || '',
+        categoryId: product.categoryId || '',
+        brandId: product.brandId || '',
+        costPrice: product.costPrice || '',
+        sellPrice: product.sellPrice || '',
+        stock: product.stock || '',
+        lowStockAt: product.lowStockAt || 5,
+        expiryDate: product.expiryDate ? product.expiryDate.split('T')[0] : '',
+        productType: product.type || 'COSMETIC',
+      };
+    }
+    return createEmptyForm();
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -52,13 +70,7 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
     return `${prefix}-${timestamp}`;
   };
 
-  const getProductType = (catId) => {
-    const cat = categoryOptions.find((c) => c.id === Number(catId));
-    if (!cat) return 'COSMETIC';
-    const name = cat.name.toLowerCase();
-    if (name.includes('jewel')) return 'JEWELRY';
-    return 'COSMETIC';
-  };
+  
 
   useEffect(() => {
     setBrandOptions(brands);
@@ -83,6 +95,7 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
         stock: product.stock || '',
         lowStockAt: product.lowStockAt || 5,
         expiryDate: product.expiryDate ? product.expiryDate.split('T')[0] : '',
+        productType: product.type || 'COSMETIC',
       });
       setImagePreview(product.imageUrl || '');
     } else {
@@ -254,7 +267,7 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
       sellPrice: Number(formData.sellPrice),
       lowStockAt: Number(formData.lowStockAt),
       expiryDate: formData.expiryDate || null,
-      type: getProductType(formData.categoryId),
+      type: formData.productType,
     };
 
     if (!isEditing) {
@@ -348,6 +361,13 @@ export default function ProductModal({ isOpen, onClose, product, onSaved, catego
                   ))}
                   <option value={CUSTOM_CATEGORY_VALUE}>+ Add custom category</option>
                 </select>
+                <div className="mt-2">
+                  <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">Product Type *</label>
+                  <select required name="productType" value={formData.productType || ''} onChange={handleChange} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl focus:ring-2 focus:ring-indigo-500 text-[var(--app-text)] outline-none">
+                    <option value="COSMETIC">Cosmetic</option>
+                    <option value="JEWELRY">Jewelry</option>
+                  </select>
+                </div>
                 {showCategoryCustom && (
                   <div className="mt-2 space-y-2 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/70 p-3">
                     <div className="flex gap-2">

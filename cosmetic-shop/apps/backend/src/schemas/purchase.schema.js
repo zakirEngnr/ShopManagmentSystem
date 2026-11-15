@@ -47,6 +47,7 @@ export const purchaseListQuerySchema = z
     supplierId: z.coerce.number().int().positive().optional(),
     from: z.string().trim().max(64).optional(),
     to: z.string().trim().max(64).optional(),
+    search: z.string().trim().max(100).optional(),
   })
   .strict()
   .refine((data) => {

@@ -29,7 +29,7 @@ export async function listSuppliers(query = {}) {
     where.name = { contains: search };
   }
 
-  const [total, suppliers] = await prisma.$transaction([
+  const [total, suppliers, outstandingTotal] = await prisma.$transaction([
     prisma.supplier.count({ where }),
     prisma.supplier.findMany({
       where,
@@ -37,9 +37,19 @@ export async function listSuppliers(query = {}) {
       skip: (page - 1) * limit,
       take: limit,
     }),
+    prisma.supplier.aggregate({
+      _sum: { balance: true },
+      where,
+    }),
   ]);
 
-  return { suppliers, total, page, limit };
+  return {
+    suppliers,
+    total,
+    page,
+    limit,
+    outstandingTotal: outstandingTotal._sum.balance ?? 0,
+  };
 }
 
 export async function createSupplier(data) {
@@ -55,7 +65,7 @@ export async function createSupplier(data) {
   return prisma.supplier.create({ data: supplierData });
 }
 
-export async function recordPayment(supplierId, data) {
+export async function recordPayment(supplierId, data, idempotencyKey) {
   const amount = Number(data?.amount);
   const paisa = toPaisa(amount);
   if (!Number.isFinite(amount) || paisa <= 0) {
@@ -66,6 +76,20 @@ export async function recordPayment(supplierId, data) {
   }
 
   return prisma.$transaction(async (tx) => {
+    // Idempotency: if a key was supplied, return the original payment when one
+    // already exists, skipping stock/payable/allocation side effects.
+    if (idempotencyKey) {
+      const existing = await tx.supplierPayment.findUnique({ where: { idempotencyKey } });
+      if (existing) {
+        const allocations = await tx.supplierPaymentAllocation.findMany({
+          where: { supplierPaymentId: existing.id },
+          orderBy: { id: 'asc' },
+        });
+        const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
+        return { payment: existing, allocations, supplier };
+      }
+    }
+
     const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
     if (!supplier) throw httpError(404, 'Supplier not found');
 
@@ -77,13 +101,30 @@ export async function recordPayment(supplierId, data) {
       throw httpError(400, "Payment cannot exceed the supplier's outstanding balance.");
     }
 
-    const payment = await tx.supplierPayment.create({
-      data: {
-        supplierId,
-        amount,
-        description: data.description === undefined || data.description === null ? null : String(data.description).trim() || null,
-      },
-    });
+    let payment;
+    try {
+      payment = await tx.supplierPayment.create({
+        data: {
+          supplierId,
+          amount,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          description: data.description === undefined || data.description === null ? null : String(data.description).trim() || null,
+        },
+      });
+    } catch (err) {
+      if (err.code === 'P2002' && idempotencyKey) {
+        const existing = await tx.supplierPayment.findUnique({ where: { idempotencyKey } });
+        if (existing) {
+          const allocations = await tx.supplierPaymentAllocation.findMany({
+            where: { supplierPaymentId: existing.id },
+            orderBy: { id: 'asc' },
+          });
+          const supplier2 = await tx.supplier.findUnique({ where: { id: supplierId } });
+          return { payment: existing, allocations, supplier: supplier2 };
+        }
+      }
+      throw err;
+    }
 
     let remainingPaisa = paisa;
     const purchases = await tx.purchase.findMany({
@@ -102,13 +143,19 @@ export async function recordPayment(supplierId, data) {
       if (allocatePaisa <= 0) continue;
 
       const nextPaidPaisa = paidPaisa + allocatePaisa;
-      await tx.purchase.update({
-        where: { id: purchase.id },
+      // Compare-and-swap on the previously observed paidAmount. If a concurrent
+      // payment changed this purchase in the meantime, updateMany matches zero
+      // rows and the whole transaction rolls back instead of overwriting it.
+      const updatedPurchase = await tx.purchase.updateMany({
+        where: { id: purchase.id, paidAmount: purchase.paidAmount },
         data: {
           paidAmount: fromPaisa(nextPaidPaisa),
           status: resolvePurchaseStatus(fromPaisa(totalPaisa), fromPaisa(nextPaidPaisa)),
         },
       });
+      if (updatedPurchase.count !== 1) {
+        throw httpError(409, 'Purchase changed, please retry');
+      }
       await tx.supplierPaymentAllocation.create({
         data: {
           supplierPaymentId: payment.id,
@@ -123,11 +170,25 @@ export async function recordPayment(supplierId, data) {
       throw httpError(400, "Payment cannot exceed the supplier's outstanding balance.");
     }
 
-    const newBalancePaisa = balancePaisa - paisa;
-    const updatedSupplier = await tx.supplier.update({
-      where: { id: supplierId },
-      data: { balance: fromPaisa(newBalancePaisa) },
+    // Atomic decrement with a guarded WHERE clause. The pre-read balance is
+    // only used for validation; the database re-checks it at write time so a
+    // concurrent payment or purchase cannot be silently overwritten.
+    const decremented = await tx.supplier.updateMany({
+      where: { id: supplierId, balance: { gte: amount } },
+      data: { balance: { decrement: amount } },
     });
+    if (decremented.count !== 1) {
+      throw httpError(409, 'Balance changed, please retry');
+    }
+
+    // Normalize to 2 decimal places after a successful decrement.
+    await tx.$executeRaw`
+      UPDATE "Supplier"
+      SET "balance" = ROUND("balance", 2)
+      WHERE "id" = ${supplierId}
+    `;
+
+    const updatedSupplier = await tx.supplier.findUnique({ where: { id: supplierId } });
 
     const allocations = await tx.supplierPaymentAllocation.findMany({
       where: { supplierPaymentId: payment.id },

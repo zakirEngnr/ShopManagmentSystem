@@ -2,15 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   DollarSign,
+  Edit,
   Loader2,
   Plus,
   ReceiptText,
   RefreshCw,
   Sparkles,
+  Archive,
   Trash2,
   X,
 } from 'lucide-react';
-import { createExpense, deleteExpense, fetchExpenses } from '../api/expenses';
+import { createExpense, deleteExpense, fetchExpenses, restoreExpense, updateExpense } from '../api/expenses';
+import ExpenseEditModal from '../components/ExpenseEditModal.jsx';
+import { failureMessage } from '../utils/moneyOperation.js';
 
 const EXPENSE_CATEGORIES = ['RENT', 'SALARIES', 'UTILITIES', 'PACKAGING', 'TRANSPORT', 'MARKETING', 'OTHER'];
 
@@ -99,6 +103,17 @@ export default function Expenses() {
   const [deletingExpenseId, setDeletingExpenseId] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
 
+  const [expenseView, setExpenseView] = useState('active');
+  const [expenseToRestore, setExpenseToRestore] = useState(null);
+  const [restoringExpenseId, setRestoringExpenseId] = useState(null);
+  const [restoreError, setRestoreError] = useState(null);
+
+  // Expense editing state.
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editSubmitError, setEditSubmitError] = useState(null);
+
   // Filter state
   const [filterExpenseName, setFilterExpenseName] = useState('');
   const [filterFrom, setFilterFrom] = useState('');
@@ -106,9 +121,19 @@ export default function Expenses() {
 
   const requestIdRef = useRef(0);
   const busyRef = useRef(false);
+  // A reload that was asked for while a request was already running. The list
+  // has to be loaded again when that request ends, instead of dropping the
+  // reload: the data may have changed in the meantime (a restoration, a
+  // deletion, a new expense).
+  const reloadPendingRef = useRef(false);
 
-  const loadExpenses = useCallback(async (manualRefresh = false) => {
-    if (busyRef.current) return;
+  const loadExpenses = useCallback(async function loadExpenses(manualRefresh = false) {
+    // A request is already running. Do not start a second one now, but do not
+    // lose the reload either: it runs when the running request ends.
+    if (busyRef.current) {
+      reloadPendingRef.current = true;
+      return;
+    }
 
     const requestId = ++requestIdRef.current;
     const isCurrent = () => requestId === requestIdRef.current;
@@ -133,11 +158,15 @@ export default function Expenses() {
           expenseName: filterExpenseName || undefined,
           from: filterFrom || undefined,
           to: filterTo || undefined,
+          includeDeleted: expenseView === 'archived' ? 'only' : undefined,
         });
         if (!isCurrent()) return;
 
         if (Array.isArray(response.items)) {
-          allExpenses.push(...response.items);
+          const visibleItems = response.items.filter((item) =>
+            expenseView === 'archived' ? Boolean(item.deletedAt) : !item.deletedAt,
+          );
+          allExpenses.push(...visibleItems);
         }
 
         if (Array.isArray(response.cumulativeTotals)) {
@@ -158,21 +187,31 @@ export default function Expenses() {
       setCumulativeTotals(fetchedCumulativeTotals);
     } catch (error) {
       if (!isCurrent()) return;
-      setLoadError(error?.response?.data?.message || error?.message || 'Failed to load expenses.');
+      setLoadError(failureMessage(error, 'expense', 'Failed to load expenses.'));
     } finally {
       if (isCurrent()) {
         setLoading(false);
         setRefreshing(false);
         busyRef.current = false;
+
+        // A reload was asked for while this request was running: load the
+        // list again now, so the data on the screen is the current one.
+        if (reloadPendingRef.current) {
+          reloadPendingRef.current = false;
+          void loadExpenses(true);
+        }
       }
     }
-  }, [filterExpenseName, filterFrom, filterTo]);
+  }, [expenseView, filterExpenseName, filterFrom, filterTo]);
 
   useEffect(() => {
     loadExpenses(false);
     return () => {
       requestIdRef.current += 1;
       busyRef.current = false;
+      // A change of the view or of the filters starts a new request, so a
+      // pending reload is not needed any more.
+      reloadPendingRef.current = false;
     };
   }, [loadExpenses]);
 
@@ -272,7 +311,7 @@ export default function Expenses() {
       closeModal();
       await loadExpenses(true);
     } catch (error) {
-      const apiMessage = error?.response?.data?.message || error?.message || 'Unable to create the expense.';
+      const apiMessage = failureMessage(error, 'expense', 'Unable to create the expense.');
       setSubmitError(apiMessage);
     } finally {
       setSaving(false);
@@ -291,10 +330,60 @@ export default function Expenses() {
       setExpenseToDelete(null);
       await loadExpenses(true);
     } catch (error) {
-      const apiMessage = error?.response?.data?.message || error?.message || 'Unable to delete this expense.';
+      const apiMessage = failureMessage(error, 'expense', 'Unable to delete this expense.');
       setDeleteError(apiMessage);
     } finally {
       setDeletingExpenseId(null);
+    }
+  };
+
+  const handleRestoreExpense = async () => {
+    if (!expenseToRestore) return;
+
+    setRestoringExpenseId(expenseToRestore.id);
+    setRestoreError(null);
+
+    try {
+      await restoreExpense(expenseToRestore.id);
+      setSuccessMessage('Expense restored successfully.');
+      setExpenseToRestore(null);
+      await loadExpenses(true);
+    } catch (error) {
+      const apiMessage = failureMessage(error, 'expense', 'Unable to restore this expense.');
+      setRestoreError(apiMessage);
+    } finally {
+      setRestoringExpenseId(null);
+    }
+  };
+
+  const handleEditExpense = (expense) => {
+    setEditingExpense(expense);
+    setEditSubmitError(null);
+    setEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setEditModalOpen(false);
+    setEditingExpense(null);
+    setEditSubmitError(null);
+  };
+
+  const handleEditSave = async (values) => {
+    if (!editingExpense) return;
+
+    setEditSaving(true);
+    setEditSubmitError(null);
+
+    try {
+      await updateExpense(editingExpense.id, values);
+      setSuccessMessage('Expense updated successfully.');
+      closeEditModal();
+      await loadExpenses(true);
+    } catch (error) {
+      const apiMessage = failureMessage(error, 'expense', 'Unable to update the expense.');
+      setEditSubmitError(apiMessage);
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -433,6 +522,23 @@ export default function Expenses() {
         </div>
       </div>
 
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setExpenseView('active')}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition ${expenseView === 'active' ? 'bg-[var(--app-accent)] text-white' : 'border border-[var(--app-border)] bg-[var(--app-panel-2)] text-[var(--app-text)]'}`}
+        >
+          Active
+        </button>
+        <button
+          type="button"
+          onClick={() => setExpenseView('archived')}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition ${expenseView === 'archived' ? 'bg-[var(--app-accent)] text-white' : 'border border-[var(--app-border)] bg-[var(--app-panel-2)] text-[var(--app-text)]'}`}
+        >
+          Archived
+        </button>
+      </div>
+
       {successMessage && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           {successMessage}
@@ -537,14 +643,35 @@ export default function Expenses() {
                       {formatCurrency(expense.amount)}
                     </td>
                     <td className="px-5 py-4">
-                      <button
-                        type="button"
-                        onClick={() => setExpenseToDelete(expense)}
-                        className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </button>
+                      {expenseView === 'archived' ? (
+                        <button
+                          type="button"
+                          onClick={() => setExpenseToRestore(expense)}
+                          disabled={restoringExpenseId === expense.id}
+                          className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                        >
+                          <Archive className="h-4 w-4" />
+                          {restoringExpenseId === expense.id ? 'Restoring...' : 'Restore'}
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleEditExpense(expense)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-3 py-2 text-xs font-bold text-[var(--app-text)] transition hover:bg-[var(--app-panel-2)]"
+                          >
+                            <Edit className="h-4 w-4" /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExpenseToDelete(expense)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -678,7 +805,7 @@ export default function Expenses() {
             </div>
             <h3 className="text-center text-xl font-extrabold text-[var(--app-text)]">Delete Expense?</h3>
             <p className="mt-2 text-center text-sm text-[var(--app-muted)]">
-              This will permanently remove <span className="font-bold text-[var(--app-text)]">{expenseToDelete.description}</span> from the record.
+              This will move <span className="font-bold text-[var(--app-text)]">{expenseToDelete.description}</span> to the archived expenses. You can restore it later.
             </p>
 
             {deleteError && (
@@ -708,6 +835,57 @@ export default function Expenses() {
             </div>
           </div>
         </div>
+      )}
+
+      {expenseToRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => !restoringExpenseId && setExpenseToRestore(null)} />
+          <div className="relative w-full max-w-md rounded-[28px] border border-[var(--app-border)] bg-[var(--app-panel)] p-6 shadow-2xl animate-pop-in">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <Archive className="h-5 w-5" />
+            </div>
+            <h3 className="text-center text-xl font-extrabold text-[var(--app-text)]">Restore Expense?</h3>
+            <p className="mt-2 text-center text-sm text-[var(--app-muted)]">
+              This will restore <span className="font-bold text-[var(--app-text)]">{expenseToRestore.description}</span> to the active expense list.
+            </p>
+
+            {restoreError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {restoreError}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setExpenseToRestore(null)}
+                disabled={restoringExpenseId}
+                className="flex-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel-2)] px-4 py-2.5 text-sm font-bold text-[var(--app-text)] transition hover:bg-[var(--app-panel)] disabled:opacity-60"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRestoreExpense}
+                disabled={restoringExpenseId}
+                className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-70"
+              >
+                {restoringExpenseId ? 'Restoring...' : 'Restore'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editModalOpen && editingExpense && (
+        <ExpenseEditModal
+          expense={editingExpense}
+          onSave={handleEditSave}
+          onClose={closeEditModal}
+          loading={editSaving}
+          error={editSubmitError}
+        />
       )}
     </div>
   );

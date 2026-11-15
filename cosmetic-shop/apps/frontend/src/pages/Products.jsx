@@ -266,7 +266,10 @@ export default function Products() {
       requestSeqRef.current += 1;
       void fetchProductsPage(searchQuery, page);
     } catch (err) {
-      setStockError(err?.message || 'Stock adjustment failed. Please try again.');
+      setStockError(
+        err?.response?.data?.error?.message ||
+          'Stock adjustment failed. Please try again.'
+      );
     } finally {
       setStockLoading(false);
       stockReqRef.current = false;

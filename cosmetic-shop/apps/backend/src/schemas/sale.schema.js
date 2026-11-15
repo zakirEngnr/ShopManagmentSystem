@@ -7,8 +7,16 @@ import { moneyAmount, withTwoDecimals } from '../utils/money.js';
  * - Exactly one of productId or manualName per item
  * - unitCost is accepted in payload but IGNORED by the service
  *   (client-supplied unitCost must never be trusted)
- * - All monetary amounts (discount, unitPrice) allow at most 2 decimal
+ * - All monetary amounts (discount, unitPrice, cashReceived) allow at most 2 decimal
  *   places via the moneyAmount() Zod helper.
+ * - cashReceived is the cash the customer handed over. It is only meaningful
+ *   for CASH payments, so the schema accepts three distinct shapes and the
+ *   SERVICE decides which of them is allowed for a given payment method:
+ *     * missing  (the key is absent)  -> undefined
+ *     * null     (the key is present)  -> null
+ *     * a number (finite, at most 2 decimals)
+ *   A number that is NaN, Infinity, a string or has more than two decimal
+ *   places is rejected here.
  */
 export const createSaleSchema = z.object({
   paymentMethod: z.enum(['CASH', 'CARD', 'JAZZCASH', 'MOBILE', 'KHATA']),
@@ -18,6 +26,12 @@ export const createSaleSchema = z.object({
   customerId: z.number().int().positive().optional(),
 
   discount: withTwoDecimals(moneyAmount().min(0)).default(0),
+
+  // The cash tender. `undefined` (omitted), `null` (explicitly no tender) and
+  // a number are three different things and stay distinguishable here.
+  cashReceived: z
+    .union([z.literal(null), withTwoDecimals(moneyAmount())])
+    .optional(),
 
   items: z
     .array(

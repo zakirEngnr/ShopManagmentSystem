@@ -18,6 +18,9 @@ function parseIdParam(req, res, next) {
 
 // All product routes require authentication (spec: protected product routes).
 router.get('/', requireAuth, productController.list);
+// The barcode lookup is registered BEFORE '/:id' so it can never be captured
+// by the parameterized product route.
+router.get('/barcode/:barcode', requireAuth, productController.byBarcode);
 router.get('/:id', requireAuth, productController.detail);
 router.post('/', requireAuth, productController.create);
 router.put('/:id', requireAuth, productController.update);

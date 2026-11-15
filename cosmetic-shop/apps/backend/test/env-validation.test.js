@@ -10,10 +10,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { TEST_DB_ROOT, ensureTestDbRoot } from '../test-support/dbGuard.js';
 
 const backendDir = path.resolve(import.meta.dirname, '..');
 const envJsUrl = pathToFileURL(path.join(backendDir, 'src', 'config', 'env.js')).href;
-const cwd = fs.realpathSync(os.tmpdir());
+// The child process runs inside the designated test database directory and
+// gets an absolute DATABASE_URL inside it - never a relative path that could
+// resolve against the application directory.
+ensureTestDbRoot();
+const cwd = TEST_DB_ROOT;
 
 // The exact JWT_SECRET value from .env.example — if that file changes,
 // this test follows it automatically.
@@ -39,7 +44,7 @@ function loadEnv(jwtSecret) {
       env: {
         ...process.env,
         NODE_ENV: 'test',
-        DATABASE_URL: 'file:./env-validation-dummy.db',
+        DATABASE_URL: `file:${path.join(TEST_DB_ROOT, 'env-validation-dummy.db')}`,
         JWT_SECRET: jwtSecret,
       },
     },

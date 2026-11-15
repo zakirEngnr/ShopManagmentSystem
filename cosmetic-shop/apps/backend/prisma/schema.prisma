@@ -28,6 +28,13 @@ model Setting {
   value String
 }
 
+// Counter rows hold the atomically allocated sequences (invoice numbers per
+// year). It is created by the migration 20261111120000_add_idempotency_and_counter.
+model Counter {
+  key   String @id
+  value Int
+}
+
 model Category {
   id        Int       @id @default(autoincrement())
   name      String    @unique
@@ -92,6 +99,7 @@ model Purchase {
   totalAmount Float
   paidAmount  Float                       @default(0)
   status      String                      @default("UNPAID")
+  idempotencyKey String?                 @unique
   supplier    Supplier                    @relation(fields: [supplierId], references: [id])
   items       PurchaseItem[]
   allocations SupplierPaymentAllocation[]
@@ -120,6 +128,7 @@ model SupplierPayment {
   supplierId  Int
   amount      Float
   description String?
+  idempotencyKey String?               @unique
   supplier    Supplier                  @relation(fields: [supplierId], references: [id])
   allocations SupplierPaymentAllocation[]
   createdAt   DateTime                  @default(now())
@@ -135,6 +144,7 @@ model SupplierPaymentAllocation {
   amount            Float
   supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
   purchase          Purchase        @relation(fields: [purchaseId], references: [id])
+  createdAt         DateTime        @default(now())
 
   @@index([supplierPaymentId])
   @@index([purchaseId])
@@ -143,10 +153,12 @@ model SupplierPaymentAllocation {
 model Sale {
   id              Int        @id @default(autoincrement())
   invoiceNo       String     @unique
+  idempotencyKey  String?    @unique
   subtotal        Float
   discount        Float      @default(0)
   total           Float
   recognizedAmount Float     @default(0)
+  cashReceived Float?
   paymentMethod   String
   customerId      Int?
   customer        Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -194,9 +206,27 @@ model Expense {
   description String
   amount      Float
   createdAt   DateTime @default(now())
+  updatedAt   DateTime? @updatedAt
+  deletedAt   DateTime?
+
+  history     ExpenseHistory[]
 
   @@index([date])
   @@index([expenseName])
+  @@index([deletedAt])
+}
+
+model ExpenseHistory {
+  id          Int      @id @default(autoincrement())
+  expenseId   Int
+  action      String
+  snapshot    String
+  createdAt   DateTime @default(now())
+
+  expense     Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([expenseId])
+  @@index([createdAt])
 }
 
 model Customer {
@@ -223,6 +253,7 @@ model KhataTransaction {
   type        String
   amount      Float
   description String?
+  idempotencyKey String?  @unique
   saleId      Int?
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   sale        Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)

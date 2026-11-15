@@ -7,6 +7,22 @@ import {
 import { fetchProducts, fetchProductByBarcode } from '../api/products';
 import { createSale } from '../api/sales';
 import { fetchCustomers } from '../api/customers';
+import { useMoneyOperation } from '../hooks/useMoneyOperation.js';
+import { MONEY_OUTCOME } from '../utils/moneyOperation.js';
+import { toPaisa, fromPaisa, toRupees, formatPaisa } from '../utils/money.js';
+import { validateCashTender, changePaisa } from '../utils/cashTender.js';
+import { createBarcodeLookup, BARCODE_STATUS, INITIAL_BARCODE_STATE } from '../utils/barcodeLookup.js';
+import UnresolvedOperationNotice from '../components/UnresolvedOperationNotice.jsx';
+import StatusMessage from '../components/StatusMessage.jsx';
+import CatalogueState from '../components/CatalogueState.jsx';
+import BarcodeLookupStatus from '../components/BarcodeLookupStatus.jsx';
+import SaleChangeAmount from '../components/SaleChangeAmount.jsx';
+
+/**
+ * Scope of the POS operation. The POS has exactly one active checkout, so a
+ * single scope is used: an unresolved checkout blocks every later checkout.
+ */
+const SALE_SCOPE = 'sale';
 
 const PRODUCT_TYPE_FILTERS = [
   { value: '', label: 'All' },
@@ -22,13 +38,6 @@ const PAYMENT_METHODS = [
 ];
 
 const DEBOUNCE_MS = 300;
-
-const toPaisa = (price) => {
-  if (price == null || !Number.isFinite(Number(price))) return 0;
-  return Math.round(Number(price) * 100);
-};
-
-const toRupees = (paisa) => paisa / 100;
 
 const formatCurrency = (value) => {
   if (value === null || value === undefined || value === '') return 'Rs. 0';
@@ -60,7 +69,10 @@ export default function POS() {
   const [productType, setProductType] = useState('');
 
   const [barcodeValue, setBarcodeValue] = useState('');
-  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  // The state of the barcode lookup: idle, looking-up, found, not-found or
+  // failed. It is owned by the lookup controller, which also decides what
+  // happens with a repeated scan event.
+  const [barcodeState, setBarcodeState] = useState({ ...INITIAL_BARCODE_STATE });
 
   const [cart, setCart] = useState([]);
   const [cartMessage, setCartMessage] = useState(null);
@@ -74,7 +86,7 @@ export default function POS() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [customerGroup, setCustomerGroup] = useState('retail'); // 'retail' | 'business-personal'
+  const [customerGroup, setCustomerGroup] = useState('retail'); // 'retail' | 'business' | 'personal'
   const [customers, setCustomers] = useState([]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerLoading, setCustomerLoading] = useState(false);
@@ -84,10 +96,71 @@ export default function POS() {
 
   const debounceTimer = useRef(null);
   const productRequestId = useRef(0);
-  const barcodeRequestId = useRef(0);
   const mounted = useRef(true);
   const barcodeInputRef = useRef(null);
   const messageTimerRef = useRef(null);
+
+
+  // The idempotency key AND the payload of the current checkout. A retry of
+  // the same checkout reuses both, so the backend returns the original sale
+  // instead of creating a second one.
+  const saleOperation = useMoneyOperation({
+    scope: SALE_SCOPE,
+    operation: 'POST /sales',
+    label: 'sale',
+    send: createSale,
+  });
+  const saleLocked = saleOperation.locked;
+
+  /**
+   * Show a message about the cart. It disappears on its own after a few
+   * seconds, but it is also announced to a screen reader.
+   */
+  const showCartMessage = (message, type = 'info') => {
+    setCartMessage(message);
+    setCartMessageType(type);
+    if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+    messageTimerRef.current = setTimeout(() => setCartMessage(null), 4000);
+  };
+
+  const addToCart = useCallback((product) => {
+    // While a checkout is unresolved its payload is frozen: changing it could
+    // record a second sale.
+    if (saleLocked) return;
+    if (!product || !product.id) return;
+    const stock = validStock(product.stock);
+    const price = toPaisa(product.sellPrice);
+
+    if (stock <= 0) return showCartMessage(`${product.name} is out of stock.`, 'error');
+    if (price <= 0) return showCartMessage(`${product.name} has an invalid price.`, 'error');
+
+    setCart((prev) => {
+      const existing = prev.find((item) => item.product.id === product.id);
+      if (existing) {
+        if (existing.quantity >= stock) {
+          showCartMessage(`Maximum stock (${stock}) reached.`, 'error');
+          return prev;
+        }
+        return prev.map((item) =>
+          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      showCartMessage(`${product.name} added.`, 'success');
+      return [...prev, { product, quantity: 1, customPricePaisa: price }];
+    });
+  }, [saleLocked]);
+
+  /**
+   * A scanned product goes into the cart.
+   *
+   * Scanning the same product twice is a deliberate action and increases its
+   * quantity (see `addToCart`); a repeated SCAN EVENT of the same barcode is
+   * filtered out by the lookup controller, so it can never add the product
+   * twice by accident.
+   */
+  const handleBarcodeFound = useCallback((product) => {
+    addToCart(product);
+  }, [addToCart]);
 
   const fetchProductList = useCallback(async (nextSearch = '', nextType = '') => {
     const currentRequestId = ++productRequestId.current;
@@ -122,11 +195,50 @@ export default function POS() {
     return () => {
       mounted.current = false;
       productRequestId.current += 1;
-      barcodeRequestId.current += 1;
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
     };
   }, [fetchProductList]);
+
+  /**
+   * The barcode lookup controller.
+   *
+   * It owns the scan events: a repeated scan event of the same barcode is
+   * ignored while its lookup runs, and a different barcode waits its turn
+   * instead of being dropped.
+   */
+  const [barcodeLookup] = useState(() =>
+    createBarcodeLookup({
+      lookup: fetchProductByBarcode,
+      onStateChange: (next) => {
+        setBarcodeState(next);
+
+        if (next.status === BARCODE_STATUS.FOUND) {
+          // Clear the input, but only when it still holds the scanned
+          // barcode - a value typed in the meantime must not be wiped.
+          setBarcodeValue((current) => (current.trim() === next.barcode ? '' : current));
+        }
+      },
+    }),
+  );
+
+  // The callbacks of the controller are refreshed after every render, so the
+  // controller always uses the current handlers without being recreated.
+  useEffect(() => {
+    barcodeLookup.configure({ onFound: handleBarcodeFound });
+  });
+
+  // The scanner keeps the focus, so the next scan goes straight into the
+  // input - also after a lookup that ended in an error.
+  useEffect(() => {
+    if (barcodeState.status !== BARCODE_STATUS.LOOKING_UP && barcodeInputRef.current) {
+      barcodeInputRef.current.focus();
+    }
+  }, [barcodeState]);
+
+  // Stop the controller when the POS is left.
+  useEffect(() => () => barcodeLookup.dispose(), [barcodeLookup]);
+
 
   useEffect(() => {
     if (paymentMethod !== 'KHATA') {
@@ -139,7 +251,10 @@ export default function POS() {
     const loadCustomers = async () => {
       setCustomerLoading(true);
       try {
-        const customerType = customerGroup === 'retail' ? 'RETAIL' : undefined;
+        let customerType;
+        if (customerGroup === 'business') customerType = 'BUSINESS';
+        else if (customerGroup === 'personal') customerType = 'PERSONAL';
+        else customerType = 'RETAIL';
         const data = await fetchCustomers({ type: customerType });
         if (!cancelled) setCustomers(Array.isArray(data) ? data : []);
       } catch {
@@ -171,67 +286,25 @@ export default function POS() {
     void fetchProductList(searchQuery, nextType);
   };
 
-  const handleBarcodeLookup = async (event) => {
+  /**
+   * Handle one scan event.
+   *
+   * The lookup controller decides what happens: a repeated event of the same
+   * barcode is ignored while its lookup runs, a different barcode waits its
+   * turn. The outcome (found, unknown barcode, failed request) is reported
+   * through `barcodeState` and rendered next to the input.
+   */
+  const handleBarcodeLookup = (event) => {
     if (event) event.preventDefault();
+
     const barcode = barcodeValue.trim();
     if (!barcode) return;
 
-    const currentRequestId = ++barcodeRequestId.current;
-    setBarcodeLoading(true);
-
-    try {
-      const product = await fetchProductByBarcode(barcode);
-      if (!mounted.current || currentRequestId !== barcodeRequestId.current) return;
-
-      if (product === null) {
-        showCartMessage('Product not found for that barcode.', 'error');
-      } else {
-        setBarcodeValue('');
-        addToCart(product);
-      }
-    } catch {
-      if (!mounted.current || currentRequestId !== barcodeRequestId.current) return;
-      showCartMessage('Unable to look up barcode.', 'error');
-    } finally {
-      if (mounted.current && currentRequestId === barcodeRequestId.current) {
-        setBarcodeLoading(false);
-        if (barcodeInputRef.current) barcodeInputRef.current.focus();
-      }
-    }
+    barcodeLookup.scan(barcode);
   };
-
-  const showCartMessage = (message, type = 'info') => {
-    setCartMessage(message);
-    setCartMessageType(type);
-    if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-    messageTimerRef.current = setTimeout(() => setCartMessage(null), 4000);
-  };
-
-  const addToCart = useCallback((product) => {
-    if (!product || !product.id) return;
-    const stock = validStock(product.stock);
-    const price = toPaisa(product.sellPrice);
-
-    if (stock <= 0) return showCartMessage(`${product.name} is out of stock.`, 'error');
-    if (price <= 0) return showCartMessage(`${product.name} has an invalid price.`, 'error');
-
-    setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
-      if (existing) {
-        if (existing.quantity >= stock) {
-          showCartMessage(`Maximum stock (${stock}) reached.`, 'error');
-          return prev;
-        }
-        return prev.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
-        );
-      }
-      showCartMessage(`${product.name} added.`, 'success');
-      return [...prev, { product, quantity: 1, customPricePaisa: price }];
-    });
-  }, []);
 
   const incrementQuantity = useCallback((productId) => {
+    if (saleLocked) return;
     setCart((prev) => {
       const item = prev.find((i) => i.product.id === productId);
       if (!item) return prev;
@@ -244,9 +317,10 @@ export default function POS() {
         i.product.id === productId ? { ...i, quantity: i.quantity + 1 } : i
       );
     });
-  }, []);
+  }, [saleLocked]);
 
   const decrementQuantity = useCallback((productId) => {
+    if (saleLocked) return;
     setCart((prev) => {
       const item = prev.find((i) => i.product.id === productId);
       if (!item) return prev;
@@ -255,12 +329,20 @@ export default function POS() {
         i.product.id === productId ? { ...i, quantity: i.quantity - 1 } : i
       );
     });
-  }, []);
+  }, [saleLocked]);
 
   const removeFromCart = useCallback((productId) => {
+    if (saleLocked) return;
     setCart((prev) => prev.filter((i) => i.product.id !== productId));
-  }, []);
+  }, [saleLocked]);
 
+  /**
+   * Empty the cart.
+   *
+   * This only clears the screen: it never touches the unresolved operation.
+   * An unresolved checkout keeps its key and payload until it is retried or
+   * explicitly abandoned, so clearing the cart can never silently discard it.
+   */
   const clearCart = useCallback(() => {
     setCart([]);
     setBillDiscount('');
@@ -276,6 +358,7 @@ export default function POS() {
   };
 
   const saveEditedPrice = (item) => {
+    if (saleLocked) return;
     const newPriceRupees = Number(tempPrice);
     if (!Number.isFinite(newPriceRupees) || newPriceRupees <= 0) {
       showCartMessage('Please enter a valid price.', 'error');
@@ -297,27 +380,39 @@ export default function POS() {
     setTempPrice('');
   };
 
-  const lineTotalPaisa = (item) => item.customPricePaisa * item.quantity;
-  const lineOriginalPaisa = (item) => toPaisa(item.product.sellPrice) * item.quantity;
-  const lineDiscountPaisa = (item) => Math.max(0, lineOriginalPaisa(item) - lineTotalPaisa(item));
+const lineTotalPaisa = (item) => item.customPricePaisa * item.quantity;
+const lineOriginalPaisa = (item) => toPaisa(item.product.sellPrice) * item.quantity;
+const lineDiscountPaisa = (item) => Math.max(0, lineOriginalPaisa(item) - lineTotalPaisa(item));
 
-  const subtotalPaisa = cart.reduce((sum, item) => sum + lineOriginalPaisa(item), 0);
-  const itemDiscountsPaisa = cart.reduce((sum, item) => sum + lineDiscountPaisa(item), 0);
-  const billDiscountPaisa = toPaisa(Number(billDiscount) || 0);
-  const totalDiscountPaisa = itemDiscountsPaisa + billDiscountPaisa;
-  const payablePaisa = Math.max(0, subtotalPaisa - totalDiscountPaisa);
+const subtotalPaisa = cart.reduce((sum, item) => sum + lineOriginalPaisa(item), 0);
+const itemDiscountsPaisa = cart.reduce((sum, item) => sum + lineDiscountPaisa(item), 0);
+const editedSubtotalPaisa = cart.reduce((sum, item) => sum + lineTotalPaisa(item), 0);
+const billDiscountPaisa = toPaisa(Number(billDiscount) || 0);
+// Negotiated item prices are already reflected in `customPricePaisa`, so only the
+// bill-level discount is sent to the backend as `discount`. This avoids counting
+// the same price reduction twice (once via unitPrice, once via discount).
+const payablePaisa = Math.max(0, editedSubtotalPaisa - billDiscountPaisa);
+
+// The cash tender that is currently entered. It is validated once, here, and
+// the result is used both by the checkout validation and by the live preview
+// of the change. The comparison happens in integer paisa.
+const cashTenderError = paymentMethod === 'CASH' ? validateCashTender(cashReceived, payablePaisa) : null;
+
+// The change the current tender implies. It is null while the tender is not
+// a valid amount, so the preview never shows a misleading change.
+const cashChangePaisa =
+  paymentMethod === 'CASH' && !cashTenderError ? changePaisa(cashReceived, payablePaisa) : null;
 
   const validateCheckout = () => {
     if (cart.length === 0) return 'Cart is empty.';
     if (!paymentMethod) return 'Please select a payment method.';
-    if (totalDiscountPaisa > subtotalPaisa) return 'Discount cannot exceed subtotal.';
+    if (billDiscountPaisa > editedSubtotalPaisa) return 'Discount cannot exceed subtotal.';
 
     if (paymentMethod === 'CASH') {
-      const receivedNum = Number(cashReceived);
-      const receivedPaisa = isNaN(receivedNum) || cashReceived === '' ? 0 : toPaisa(receivedNum);
-      if (receivedPaisa < payablePaisa) {
-        return `Cash received (Rs. ${toRupees(receivedPaisa)}) is less than total (Rs. ${toRupees(payablePaisa)}).`;
-      }
+      // The tender is validated against the amount due in integer paisa. An
+      // empty field, a non-number and a negative amount are all rejected, and
+      // a tender below the total is rejected as well.
+      if (cashTenderError) return cashTenderError;
     }
 
     if (paymentMethod === 'KHATA' && !selectedCustomer) {
@@ -326,40 +421,108 @@ export default function POS() {
     return null;
   };
 
+  /**
+   * Apply the result of a submission to the screen.
+   *
+   * @param {object} outcome - The result of `saleOperation.submit()` or
+   *   `saleOperation.retry()`.
+   */
+  const applyOutcome = (outcome) => {
+    if (outcome.outcome === MONEY_OUTCOME.SENT) {
+      // The server confirmed the sale: the UI is built from the values the
+      // server returned, not from the form.
+      const sale = outcome.result || {};
+      const customer =
+        sale.customerId && selectedCustomer && selectedCustomer.id === sale.customerId
+          ? selectedCustomer
+          : null;
+
+      setSaleSuccess({ ...sale, customer });
+      clearCart();
+      // Refresh products after a confirmed successful sale so stock badges
+      // reflect the decremented stock from the backend. Preserves the active
+      // search and product-type filters. Errors here do not affect the sale
+      // outcome, which was already confirmed successful.
+      void fetchProductList(searchQuery, productType);
+      setCashReceived('');
+      setSelectedCustomer(null);
+      setPaymentMethod('');
+      setCheckoutError(null);
+      return;
+    }
+
+    if (outcome.outcome === MONEY_OUTCOME.AMBIGUOUS) {
+      // The request may already have been committed. The key AND the payload
+      // stay pinned, the checkout is frozen until the user retries it or
+      // explicitly abandons it.
+      setCheckoutError(outcome.message);
+      return;
+    }
+
+    // A blocked submission, a verified failure, a request that could not be
+    // sent safely and a request that is already in flight all end up here.
+    setCheckoutError(outcome.message);
+  };
+
   const handleCheckout = async () => {
+    if (isSubmitting) return;
+
     const error = validateCheckout();
     if (error) return setCheckoutError(error);
 
-    setIsSubmitting(true);
-    setCheckoutError(null);
-
-    // THE FIX: Send original price as unitPrice, and total discount (item + bill) as discount.
-    // This prevents double-counting the item discount in the backend.
     const saleData = {
       paymentMethod,
-      discount: toRupees(totalDiscountPaisa),
+      discount: toRupees(billDiscountPaisa),
       items: cart.map((item) => ({
         productId: item.product.id,
         quantity: item.quantity,
-        unitPrice: toRupees(toPaisa(item.product.sellPrice)), // ORIGINAL price
+        unitPrice: toRupees(item.customPricePaisa), // negotiated (edited) price
       })),
+      // The cash tender is sent ONLY for a cash payment. Every other method
+      // omits the field entirely, and the server stores NULL for it.
+      ...(paymentMethod === 'CASH'
+        ? { cashReceived: fromPaisa(toPaisa(cashReceived)) }
+        : {}),
       ...(paymentMethod === 'KHATA' && selectedCustomer
         ? { customerId: selectedCustomer.id }
         : {}),
     };
 
+    setIsSubmitting(true);
+    setCheckoutError(null);
+
     try {
-      const res = await createSale(saleData);
-      setSaleSuccess({ ...res.sale, customer: selectedCustomer });
-      clearCart();
-      setCashReceived('');
-      setSelectedCustomer(null);
-      setPaymentMethod('');
-    } catch (err) {
-      setCheckoutError(err.response?.data?.error?.message || 'Failed to complete sale.');
+      // The body is stored with the key and sent unchanged. While a checkout
+      // is unresolved, a DIFFERENT body is refused instead of sent.
+      const outcome = await saleOperation.submit(saleData);
+      applyOutcome(outcome);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  /** Send the ORIGINAL request again, unchanged. */
+  const handleRetrySale = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setCheckoutError(null);
+
+    try {
+      const outcome = await saleOperation.retry();
+      applyOutcome(outcome);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /**
+   * Explicitly start something else. The original request may already have
+   * been committed - this does not undo it.
+   */
+  const handleAbandonSale = () => {
+    saleOperation.abandon();
+    clearCart();
+    setCheckoutError(null);
   };
 
   const renderProductCard = (product, index) => {
@@ -428,6 +591,7 @@ export default function POS() {
                   value={barcodeValue}
                   onChange={(e) => setBarcodeValue(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleBarcodeLookup(e)}
+                  data-testid="pos-barcode-input"
                   className="w-full pl-12 pr-4 py-3.5 bg-[var(--app-panel)] border-2 border-[var(--app-border)] rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 outline-none transition-all font-mono text-lg text-[var(--app-text)] placeholder:font-sans"
                   autoComplete="off"
                 />
@@ -458,20 +622,22 @@ export default function POS() {
                 </button>
               ))}
             </div>
+
+            <div className="mt-3">
+              <BarcodeLookupStatus state={barcodeState} />
+            </div>
           </div>
 
-          {listLoading ? (
-             <div className="flex justify-center py-32"><Loader2 className="h-10 w-10 animate-spin text-indigo-500" /></div>
-          ) : products.length === 0 ? (
-             <div className="text-center py-24 bg-[var(--app-panel-2)] rounded-3xl border-2 border-dashed border-[var(--app-border)]">
-               <Package className="h-12 w-12 text-[var(--app-muted)] mx-auto mb-3" />
-               <p className="text-[var(--app-muted)] font-medium">No products found.</p>
-             </div>
-          ) : (
+          <CatalogueState
+            loading={listLoading}
+            error={listError}
+            empty={products.length === 0}
+            onRetry={() => void fetchProductList(searchQuery, productType)}
+          >
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {products.map((p, i) => renderProductCard(p, i))}
             </div>
-          )}
+          </CatalogueState>
         </div>
 
         <div className="lg:col-span-4">
@@ -483,12 +649,23 @@ export default function POS() {
                 </div>
                 <h2 className="text-lg font-bold text-[var(--app-text)]">Current Sale</h2>
               </div>
-              <button onClick={clearCart} disabled={cart.length === 0} className="text-[var(--app-muted)] hover:text-red-500 p-2 rounded-xl disabled:opacity-50">
+              <button
+                onClick={clearCart}
+                disabled={cart.length === 0 || saleLocked}
+                title={saleLocked ? 'The unresolved checkout keeps its own details.' : undefined}
+                className="text-[var(--app-muted)] hover:text-red-500 p-2 rounded-xl disabled:opacity-50"
+              >
                 <Trash2 className="h-5 w-5" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[var(--app-panel-2)]/60">
+              <StatusMessage
+                message={cartMessage}
+                type={cartMessageType}
+                onDismiss={() => setCartMessage(null)}
+              />
+
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[var(--app-muted)]">
                   <div className="w-20 h-20 bg-[var(--app-panel)] rounded-full flex items-center justify-center mb-4 border border-[var(--app-border)]">
@@ -521,6 +698,7 @@ export default function POS() {
                           <input
                             type="number"
                             value={tempPrice}
+                            disabled={saleLocked}
                             onChange={(e) => setTempPrice(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') saveEditedPrice(item);
@@ -529,12 +707,13 @@ export default function POS() {
                             className="w-20 px-2 py-1 text-sm bg-[var(--app-panel-2)] border border-indigo-400 rounded-lg text-[var(--app-text)] outline-none"
                             autoFocus
                           />
-                          <button onClick={() => saveEditedPrice(item)} className="p-1 bg-green-100 text-green-700 rounded-md"><Check className="h-4 w-4" /></button>
+                          <button onClick={() => saveEditedPrice(item)} disabled={saleLocked} className="p-1 bg-green-100 text-green-700 rounded-md disabled:opacity-50"><Check className="h-4 w-4" /></button>
                           <button onClick={cancelEditingPrice} className="p-1 text-[var(--app-muted)] text-xs">Cancel</button>
                         </div>
                       ) : (
                         <button
                           onClick={() => startEditingPrice(item)}
+                          disabled={saleLocked}
                           className="text-xs text-indigo-600 hover:underline mb-2 flex items-center gap-1 w-fit"
                         >
                           <Edit2 className="h-3 w-3" /> Edit Price
@@ -543,15 +722,15 @@ export default function POS() {
 
                       <div className="flex items-center justify-between mt-1">
                         <div className="flex items-center gap-1 bg-[var(--app-panel-2)] rounded-lg p-1 border border-[var(--app-border)]">
-                          <button onClick={() => decrementQuantity(item.product.id)} className="w-7 h-7 flex items-center justify-center bg-[var(--app-panel)] rounded-md hover:text-red-500">
+                          <button onClick={() => decrementQuantity(item.product.id)} disabled={saleLocked} className="w-7 h-7 flex items-center justify-center bg-[var(--app-panel)] rounded-md hover:text-red-500 disabled:opacity-50">
                             <Minus className="h-3 w-3" />
                           </button>
                           <span className="text-xs font-bold w-6 text-center">{item.quantity}</span>
-                          <button onClick={() => incrementQuantity(item.product.id)} disabled={item.quantity >= validStock(item.product.stock)} className="w-7 h-7 flex items-center justify-center bg-[var(--app-panel)] rounded-md hover:text-indigo-600 disabled:opacity-50">
+                          <button onClick={() => incrementQuantity(item.product.id)} disabled={saleLocked || item.quantity >= validStock(item.product.stock)} className="w-7 h-7 flex items-center justify-center bg-[var(--app-panel)] rounded-md hover:text-indigo-600 disabled:opacity-50">
                             <Plus className="h-3 w-3" />
                           </button>
                         </div>
-                        <button onClick={() => removeFromCart(item.product.id)} className="text-xs text-[var(--app-muted)] hover:text-red-500 underline">
+                        <button onClick={() => removeFromCart(item.product.id)} disabled={saleLocked} className="text-xs text-[var(--app-muted)] hover:text-red-500 underline disabled:opacity-50">
                           Remove
                         </button>
                       </div>
@@ -581,7 +760,9 @@ export default function POS() {
                       type="number"
                       min="0"
                       value={billDiscount}
-                      max={subtotalPaisa / 100}
+                      disabled={saleLocked}
+                      data-testid="pos-bill-discount"
+                      max={editedSubtotalPaisa / 100}
                       onChange={(e) => {
                         const raw = e.target.value === '' ? '' : Number(e.target.value);
                         let nextValue = raw;
@@ -631,6 +812,7 @@ export default function POS() {
                 {PAYMENT_METHODS.map((m) => (
                   <button
                     key={m.value}
+                    disabled={saleLocked}
                     onClick={() => {
                       setPaymentMethod(m.value);
                       setCheckoutError(null);
@@ -657,12 +839,19 @@ export default function POS() {
                       type="number"
                       min="0"
                       value={cashReceived}
+                      disabled={saleLocked}
                       onChange={(e) => { setCashReceived(e.target.value); setCheckoutError(null); }}
                       className="w-full pl-7 pr-2 py-1.5 text-right text-sm font-bold bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-lg text-[var(--app-text)] outline-none"
                       placeholder="0"
                     />
                   </div>
                 </div>
+              )}
+
+              {paymentMethod === 'CASH' && cashChangePaisa !== null && (
+                <p className="text-xs text-[var(--app-text-soft)] text-right" data-testid="cash-change-preview">
+                  Change: {formatPaisa(cashChangePaisa)}
+                </p>
               )}
 
               {paymentMethod === 'KHATA' && (
@@ -673,6 +862,7 @@ export default function POS() {
                       type="text"
                       placeholder="Search person by name or phone..."
                       value={customerSearch}
+                      disabled={saleLocked}
                       onChange={(e) => setCustomerSearch(e.target.value)}
                       className="w-full pl-9 pr-4 py-2.5 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-[var(--app-accent)]"
                     />
@@ -697,14 +887,25 @@ export default function POS() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setCustomerGroup('business-personal'); if (!selectedCustomer || (selectedCustomer.type !== 'BUSINESS' && selectedCustomer.type !== 'PERSONAL')) setSelectedCustomer(null); }}
+                      onClick={() => { setCustomerGroup('business'); if (!selectedCustomer || selectedCustomer.type !== 'BUSINESS') setSelectedCustomer(null); }}
                       className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
-                        customerGroup === 'business-personal'
+                        customerGroup === 'business'
                           ? 'bg-[var(--app-accent)] text-white shadow-lg'
                           : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
                       }`}
                     >
-                      Business / Personal
+                      Business Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCustomerGroup('personal'); if (!selectedCustomer || selectedCustomer.type !== 'PERSONAL') setSelectedCustomer(null); }}
+                      className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all ${
+                        customerGroup === 'personal'
+                          ? 'bg-[var(--app-accent)] text-white shadow-lg'
+                          : 'bg-[var(--app-panel-2)] border border-[var(--app-border)] text-[var(--app-text-soft)]'
+                      }`}
+                    >
+                      Personal Customer
                     </button>
                   </div>
 
@@ -748,6 +949,7 @@ export default function POS() {
                                 <button
                                   type="button"
                                   onClick={() => setSelectedCustomer(c)}
+                                  disabled={saleLocked}
                                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-left hover:bg-[var(--app-panel)] transition-colors border-b border-[var(--app-border)]/50 last:border-0"
                                 >
                                   <span>
@@ -788,6 +990,15 @@ export default function POS() {
                 </div>
               )}
 
+              <UnresolvedOperationNotice
+                label="sale"
+                unresolved={saleOperation.unresolved}
+                busy={isSubmitting}
+                onRetry={handleRetrySale}
+                onAbandon={handleAbandonSale}
+                className="mb-3"
+              />
+
               {checkoutError && (
                 <div className="p-2.5 bg-red-50 dark:bg-red-500/10 border border-red-100 rounded-lg flex items-start gap-2 text-xs text-red-600 font-medium">
                   <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
@@ -797,7 +1008,8 @@ export default function POS() {
 
               <button
                 onClick={handleCheckout}
-                disabled={cart.length === 0 || isSubmitting}
+                disabled={cart.length === 0 || isSubmitting || saleLocked}
+                data-testid="pos-checkout"
                 className="w-full py-3.5 rounded-2xl bg-indigo-600 text-white font-bold text-base hover:bg-indigo-500 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-xl"
               >
                 {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
@@ -822,12 +1034,20 @@ export default function POS() {
                   Udhaar recorded for: {saleSuccess.customer.name}
                 </p>
               )}
+              {!saleSuccess.customer && saleSuccess.customerId ? (
+                <p className="text-sm mt-1 bg-blue-700/30 px-3 py-1 rounded-full">
+                  Udhaar recorded for customer #{saleSuccess.customerId}
+                </p>
+              ) : null}
             </div>
             <div className="p-6 space-y-4">
               <div className="flex justify-between pb-3 border-b border-[var(--app-border)]">
                 <span className="text-sm text-[var(--app-muted)]">Total Paid</span>
-                <span className="text-xl font-extrabold">Rs. {saleSuccess.total?.toLocaleString()}</span>
+                <span className="text-xl font-extrabold" data-testid="sale-success-total">
+                  Rs. {Number(saleSuccess.total ?? 0).toLocaleString()}
+                </span>
               </div>
+              <SaleChangeAmount sale={saleSuccess} />
               <button
                 onClick={() => setSaleSuccess(null)}
                 className="w-full py-3 bg-[var(--app-panel-2)] rounded-xl font-bold hover:bg-[var(--app-panel)] border border-[var(--app-border)]"

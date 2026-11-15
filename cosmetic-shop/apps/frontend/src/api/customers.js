@@ -1,4 +1,5 @@
-import client from './client';
+import client from './client.js';
+import { requireIdempotencyKey } from '../utils/idempotency.js';
 
 /**
  * Customer (Khata) API helpers.
@@ -160,17 +161,56 @@ export async function fetchCustomerLedger(id, { page = 1, limit = 50 } = {}) {
 }
 
 /**
+ * Build the request body of a customer payment from the form state.
+ *
+ * The result is the EXACT body that is sent. The caller stores it with the
+ * idempotency key, so a replay sends the very same body and not a body that
+ * was rebuilt from the (possibly edited) form.
+ *
+ * The customer id is NOT part of the body: the backend schema of
+ * `POST /customers/:id/payment` is strict and rejects unknown fields. It is
+ * carried by the URL and stored with the operation instead.
+ *
+ * @param {object} form - { amount, description }
+ * @returns {object} The request body.
+ */
+export function buildCustomerPaymentPayload(form) {
+  return {
+    amount: Number(form?.amount),
+    description: form?.description ? String(form.description).trim() : null,
+  };
+}
+
+/**
+ * Build the request body of a manual debt entry from the form state.
+ *
+ * @param {object} form - { amount, description }
+ * @returns {object} The request body.
+ */
+export function buildCustomerDebtPayload(form) {
+  return {
+    amount: Number(form?.amount),
+    description: String(form?.description ?? '').trim(),
+  };
+}
+
+/**
  * Record a payment received from a customer.
+ *
+ * The body is put on the wire UNCHANGED, so a replay of an ambiguous request
+ * sends byte for byte the request that may already have been committed.
+ *
  * @param {number|string} id - customer id
- * @param {object} data - { amount, description? }
+ * @param {object} payload - The request body. It is sent unchanged.
+ * @param {string} idempotencyKey - Key of this logical submission.
  * @returns { transaction, customer }
  */
-export async function recordCustomerPayment(id, data) {
+export async function recordCustomerPayment(id, payload, idempotencyKey) {
   if (id == null) throw new Error('Customer id is required to record a payment.');
+  const key = requireIdempotencyKey(idempotencyKey, 'POST /customers/:id/payment');
 
-  const res = await client.post(`/customers/${id}/payment`, {
-    amount: Number(data.amount),
-    description: data.description,
+  const res = await client.post(`/customers/${id}/payment`, payload, {
+    headers: { 'Idempotency-Key': key },
   });
 
   if (
@@ -179,6 +219,8 @@ export async function recordCustomerPayment(id, data) {
     !res.data.transaction ||
     !res.data.customer
   ) {
+    // The server answered 2xx, so the payment was committed. The frontend
+    // must treat this as an unknown outcome, not as a failure.
     throw new Error('Invalid payment response from server.');
   }
 
@@ -187,16 +229,21 @@ export async function recordCustomerPayment(id, data) {
 
 /**
  * Record a manual debt entry for a BUSINESS or PERSONAL customer.
+ *
+ * The body is put on the wire UNCHANGED, so a replay of an ambiguous request
+ * sends byte for byte the request that may already have been committed.
+ *
  * @param {number|string} id - customer id
- * @param {object} data - { amount, description }
+ * @param {object} payload - The request body. It is sent unchanged.
+ * @param {string} idempotencyKey - Key of this logical submission.
  * @returns { transaction, customer }
  */
-export async function recordCustomerDebt(id, data) {
+export async function recordCustomerDebt(id, payload, idempotencyKey) {
   if (id == null) throw new Error('Customer id is required to record a debt entry.');
+  const key = requireIdempotencyKey(idempotencyKey, 'POST /customers/:id/debt');
 
-  const res = await client.post(`/customers/${id}/debt`, {
-    amount: Number(data.amount),
-    description: data.description,
+  const res = await client.post(`/customers/${id}/debt`, payload, {
+    headers: { 'Idempotency-Key': key },
   });
 
   if (
@@ -205,6 +252,8 @@ export async function recordCustomerDebt(id, data) {
     !res.data.transaction ||
     !res.data.customer
   ) {
+    // The server answered 2xx, so the debt entry was committed. The frontend
+    // must treat this as an unknown outcome, not as a failure.
     throw new Error('Invalid debt entry response from server.');
   }
 

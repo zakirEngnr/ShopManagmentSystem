@@ -171,6 +171,72 @@ export async function revokeUserTokens(userId) {
   });
 }
 
+const PUBLIC_USER_FIELDS = { id: true, email: true, role: true };
+
+async function requireActiveUser(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, password: true, role: true, isActive: true },
+  });
+  if (!user) {
+    throw httpError(404, 'User not found');
+  }
+  if (!user.isActive) {
+    throw httpError(403, 'Account is disabled');
+  }
+  return user;
+}
+
+export async function changeEmail(userId, { currentPassword, newEmail }) {
+  const user = await requireActiveUser(userId);
+
+  const ok = await comparePassword(currentPassword, user.password);
+  if (!ok) {
+    throw httpError(401, 'Invalid credentials');
+  }
+
+  if (newEmail === user.email) {
+    throw httpError(400, 'Email is unchanged');
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email: newEmail } });
+  if (existing && existing.id !== userId) {
+    throw httpError(409, 'Email is already in use');
+  }
+
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: { email: newEmail, tokenVersion: { increment: 1 } },
+      select: PUBLIC_USER_FIELDS,
+    }),
+  ]);
+
+  return { user: { id: updated.id, email: updated.email, role: updated.role } };
+}
+
+export async function changePassword(userId, { currentPassword, newPassword }) {
+  const user = await requireActiveUser(userId);
+
+  const ok = await comparePassword(currentPassword, user.password);
+  if (!ok) {
+    throw httpError(401, 'Invalid credentials');
+  }
+
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: await hashPassword(newPassword),
+        tokenVersion: { increment: 1 },
+      },
+      select: PUBLIC_USER_FIELDS,
+    }),
+  ]);
+
+  return { user: { id: updated.id, email: updated.email, role: updated.role } };
+}
+
 export async function getUserById(id) {
   const user = await prisma.user.findUnique({
     where: { id },

@@ -575,6 +575,7 @@ test('21 normal payment methods do not create Khata transactions', async () => {
   const product = await createProduct({ name: 'K5', stock: 3, sku: 'KHATA-S21' });
   const res = await khataSale({
     paymentMethod: 'CASH',
+    cashReceived: 10,
     customerId: customer.id,
     items: [{ productId: product.id, quantity: 1, unitPrice: 10 }],
   });
@@ -1170,4 +1171,116 @@ test('48 Existing historical data remains intact', async () => {
   assert.ok(zakir);
   assert.equal(zakir.name, 'zakir');
   assert.equal(zakir.type, 'RETAIL');
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: KHATA floating-point balance residue regression tests
+// ---------------------------------------------------------------------------
+
+async function createKhataProduct(overrides = {}) {
+  return prisma.product.create({
+    data: {
+      sku: `PH1-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      name: 'PH1 Product',
+      type: 'COSMETIC',
+      costPrice: 5,
+      sellPrice: 10,
+      stock: 1000,
+      categoryId,
+      brandId,
+      ...overrides,
+    },
+  });
+}
+
+test('49 repeated debt additions produce correctly rounded balance (100 x 0.01 = 1.00)', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'DebtResidue', phone: `+1000000501`, type: 'BUSINESS', balance: 0 },
+  });
+
+  for (let i = 0; i < 100; i += 1) {
+    const res = await req('POST', `/api/customers/${customer.id}/debt`, {
+      token: adminToken,
+      body: { amount: 0.01, description: `debt ${i + 1}` },
+    });
+    assert.equal(res.status, 201, `debt ${i + 1} failed: ${JSON.stringify(res.body)}`);
+  }
+
+  const row = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.equal(Number(row.balance), 1, `Expected balance 1 after 100x0.01 debt, got ${row.balance}`);
+});
+
+test('50 KHATA sale produces correctly rounded balance', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'SaleResidue', phone: `+1000000502`, type: 'RETAIL', balance: 0 },
+  });
+  const product = await createKhataProduct({ name: 'SaleResidueProduct', stock: 1000 });
+
+  // A KHATA sale whose total is a value prone to float residue.
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'KHATA',
+      customerId: customer.id,
+      discount: 0,
+      items: [{ productId: product.id, quantity: 1, unitPrice: 33.33 }],
+    },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+
+  const row = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.equal(Number(row.balance), 33.33, `Expected balance 33.33, got ${row.balance}`);
+});
+
+test('51 payment exceeding the balance by a sub-cent amount is rejected (no overpayment)', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'OverpayGuard', phone: `+1000000503`, type: 'RETAIL', balance: 0.006 },
+  });
+
+  // amount (0.01) exceeds balance (0.006). The old `gte: amount - 0.005` guard
+  // would wrongly permit this; `gte: amount` must reject it. Either a 400
+  // (paisa pre-check) or a 409 (guarded decrement) is acceptable; what matters
+  // is that the overpayment is rejected and the balance is unchanged.
+  const res = await req('POST', `/api/customers/${customer.id}/payment`, {
+    token: adminToken,
+    body: { amount: 0.01, description: 'overpayment attempt' },
+  });
+  assert.ok(res.status === 400 || res.status === 409, `Expected 400/409 for overpayment, got ${res.status}: ${JSON.stringify(res.body)}`);
+
+  const row = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.equal(Number(row.balance), 0.006, 'balance must be unchanged by a rejected overpayment');
+});
+
+test('52 payment equal to the cleared balance leaves exactly zero after residue-prone sales', async () => {
+  const customer = await prisma.customer.create({
+    data: { name: 'ClearResidue', phone: `+1000000504`, type: 'RETAIL', balance: 0 },
+  });
+  const product = await createKhataProduct({ name: 'ClearProduct', stock: 1000 });
+
+  // Build a balance of 1.00 via ten 0.10 KHATA sales.
+  for (let i = 0; i < 10; i += 1) {
+    const res = await req('POST', '/api/sales', {
+      token: adminToken,
+      body: {
+        paymentMethod: 'KHATA',
+        customerId: customer.id,
+        discount: 0,
+        items: [{ productId: product.id, quantity: 1, unitPrice: 0.10 }],
+      },
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+  }
+
+  const before = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.equal(Number(before.balance), 1, `Expected balance 1 after sales, got ${before.balance}`);
+
+  // Clear it with a single 1.00 payment.
+  const payRes = await req('POST', `/api/customers/${customer.id}/payment`, {
+    token: adminToken,
+    body: { amount: 1, description: 'clear' },
+  });
+  assert.equal(payRes.status, 200, JSON.stringify(payRes.body));
+
+  const after = await prisma.customer.findUnique({ where: { id: customer.id } });
+  assert.equal(Number(after.balance), 0, `Expected balance 0 after clearing, got ${after.balance}`);
 });

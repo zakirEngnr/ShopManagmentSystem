@@ -1,4 +1,4 @@
-import client, { TOKEN_STORAGE_KEY } from './client';
+import client, { TOKEN_STORAGE_KEY } from './client.js';
 
 export async function fetchProducts({ search, type, limit = 50, page = 1 } = {}) {
   const params = new URLSearchParams();
@@ -18,6 +18,22 @@ export async function fetchProducts({ search, type, limit = 50, page = 1 } = {})
   return res.data;
 }
 
+/**
+ * Look a product up by its exact barcode.
+ *
+ * Backend contract (GET /api/products/barcode/:barcode):
+ *   Response (200): { ok: true, product } - the product without its cost
+ *                    price, which the POS does not need.
+ *   Response (404): { ok: false, error: { message } } - no product carries
+ *                    that barcode.
+ *   Response (400): the barcode is empty or longer than 40 characters.
+ *
+ * @param {string} barcode - The scanned barcode.
+ * @returns {Promise<object|null>} The product, or null when no product
+ *   carries that barcode.
+ * @throws When the request failed. A failed lookup is NOT the same as an
+ *   unknown barcode: the caller has to tell them apart.
+ */
 export async function fetchProductByBarcode(barcode) {
   const normalizedBarcode = String(barcode ?? '').trim();
 
@@ -27,6 +43,18 @@ export async function fetchProductByBarcode(barcode) {
     const res = await client.get(
       `/products/barcode/${encodeURIComponent(normalizedBarcode)}`
     );
+
+    if (
+      !res.data ||
+      typeof res.data !== 'object' ||
+      !res.data.product ||
+      typeof res.data.product !== 'object'
+    ) {
+      // The server answered 2xx but the body is not a product. The lookup
+      // FAILED, it did not find nothing - reporting "unknown barcode" here
+      // would hide a broken answer.
+      throw new Error('Invalid barcode lookup response from server.');
+    }
 
     return res.data.product;
   } catch (err) {

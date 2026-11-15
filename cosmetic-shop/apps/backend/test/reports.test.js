@@ -850,3 +850,120 @@ test('T19 accrual rule: KHATA sale revenue counted on sale date', async () => {
   assert.equal(aprReport.collected, 1000, `April collected: ${aprReport.collected}`);
   assert.equal(aprReport.outstanding, 0, `April outstanding: ${aprReport.outstanding}`);
 });
+
+// ---------------------------------------------------------------------------
+// T20. Bill discount: report discount equals Sale.discount
+// ---------------------------------------------------------------------------
+test('T20 bill discount: report discount equals Sale.discount', async () => {
+  const product = await createProduct({ name: 'Disc Product', sku: 'RP-BD-1' });
+  await createSaleDirect({
+    invoiceNo: 'INV-BD-1',
+    createdAt: utc(2026, 1, 20, 9, 0, 0),
+    subtotal: 200,
+    discount: 50,
+    items: [{ productId: product.id, quantity: 2, unitPrice: 100, unitCost: 40 }],
+  });
+
+  const res = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2026-01-20' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.report.discount, 50);
+  assert.equal(res.body.report.netSales, 150);
+});
+
+// ---------------------------------------------------------------------------
+// T21. Negotiated item price (unitPrice < sellPrice) is NOT a bill discount
+// ---------------------------------------------------------------------------
+test('T21 negotiated item price does not count as discount', async () => {
+  const product = await prisma.product.create({
+    data: {
+      sku: 'RP-NEG-1',
+      name: 'Negotiated Product',
+      type: 'COSMETIC',
+      costPrice: 40,
+      sellPrice: 100,
+      stock: 100,
+      lowStockAt: 5,
+      categoryId,
+    },
+  });
+  // unitPrice 60 < sellPrice 100: negotiated price, NOT a discount
+  await createSaleDirect({
+    invoiceNo: 'INV-NEG-1',
+    createdAt: utc(2026, 1, 20, 10, 0, 0),
+    subtotal: 60,
+    discount: 0,
+    items: [{ productId: product.id, quantity: 1, unitPrice: 60, unitCost: 40 }],
+  });
+
+  const res = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2026-01-20' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.report.discount, 0);
+  assert.equal(res.body.report.netSales, 60);
+});
+
+// ---------------------------------------------------------------------------
+// T22. Historical price independence: changing sellPrice does not affect discount
+// ---------------------------------------------------------------------------
+test('T22 changing sellPrice after sale does not affect report discount', async () => {
+  const product = await prisma.product.create({
+    data: {
+      sku: 'RP-HIST-1',
+      name: 'Historical Price Product',
+      type: 'COSMETIC',
+      costPrice: 40,
+      sellPrice: 100,
+      stock: 100,
+      lowStockAt: 5,
+      categoryId,
+    },
+  });
+  await createSaleDirect({
+    invoiceNo: 'INV-HIST-1',
+    createdAt: utc(2026, 1, 20, 11, 0, 0),
+    subtotal: 100,
+    discount: 30,
+    items: [{ productId: product.id, quantity: 1, unitPrice: 100, unitCost: 40 }],
+  });
+
+  // Change the current list price after the sale
+  await prisma.product.update({
+    where: { id: product.id },
+    data: { sellPrice: 200 },
+  });
+
+  const res = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2026-01-20' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.report.discount, 30);
+});
+
+// ---------------------------------------------------------------------------
+// T23. Net sales = SUM(Sale.total), discount not subtracted twice
+// ---------------------------------------------------------------------------
+test('T23 net sales equals SUM(Sale.total), discount not subtracted twice', async () => {
+  const product = await createProduct({ name: 'Net Sales', sku: 'RP-NS-1' });
+  await createSaleDirect({
+    invoiceNo: 'INV-NS-1',
+    createdAt: utc(2026, 1, 20, 12, 0, 0),
+    subtotal: 100,
+    discount: 20,
+    items: [{ productId: product.id, quantity: 1, unitPrice: 100, unitCost: 40 }],
+  });
+
+  const res = await req('GET', `${REPORTS}/daily`, {
+    token: adminToken,
+    query: { date: '2026-01-20' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.report.discount, 20);
+  assert.equal(res.body.report.netSales, 80);
+  assert.notEqual(res.body.report.netSales, 60);
+});

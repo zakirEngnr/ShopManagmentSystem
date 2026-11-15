@@ -30,14 +30,14 @@ function toUpdateData(data) {
   return out;
 }
 
-async function assertCategoryExists(categoryId) {
-  const row = await prisma.category.findUnique({ where: { id: categoryId } });
+async function assertCategoryExists(categoryId, db = prisma) {
+  const row = await db.category.findUnique({ where: { id: categoryId } });
   if (!row) throw httpError(404, 'Category not found');
 }
 
-async function assertBrandExists(brandId) {
+async function assertBrandExists(brandId, db = prisma) {
   if (brandId === null || brandId === undefined) return;
-  const row = await prisma.brand.findUnique({ where: { id: brandId } });
+  const row = await db.brand.findUnique({ where: { id: brandId } });
   if (!row) throw httpError(404, 'Brand not found');
 }
 export async function listProducts(query) {
@@ -66,11 +66,60 @@ export async function getProductById(id) {
   return row;
 }
 
-export async function createProduct(data) {
-  await assertCategoryExists(data.categoryId);
-  await assertBrandExists(data.brandId);
+/**
+ * The fields of the barcode lookup.
+ *
+ * `costPrice` is deliberately NOT part of them: the barcode lookup exists
+ * for the POS, which needs the selling price, the stock and the identity of
+ * the product, never the purchase cost. The purchase cost is not needed to
+ * ring up a sale and must not leak through a scanning endpoint.
+ */
+const BARCODE_LOOKUP_SELECT = Object.freeze({
+  id: true,
+  sku: true,
+  barcode: true,
+  name: true,
+  type: true,
+  sellPrice: true,
+  stock: true,
+  lowStockAt: true,
+  expiryDate: true,
+  imageUrl: true,
+  categoryId: true,
+  brandId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+/**
+ * Find a product by its EXACT barcode.
+ *
+ * `Product.barcode` carries a UNIQUE index, so this is a single indexed
+ * lookup - no scan, no ambiguity. The comparison is exact (SQLite compares
+ * TEXT with `=`, which is case sensitive and whitespace sensitive), so
+ * "123" never matches "123 " and "ABC" never matches "abc".
+ *
+ * @param {string} barcode - The scanned barcode (already trimmed).
+ * @returns {Promise<object>} The product, without its cost price.
+ * @throws 404 when no product carries that barcode.
+ */
+export async function getProductByBarcode(barcode) {
+  const normalized = String(barcode ?? '').trim();
+  if (!normalized) throw httpError(400, 'Barcode is required');
+
+  const row = await prisma.product.findUnique({
+    where: { barcode: normalized },
+    select: { ...BARCODE_LOOKUP_SELECT },
+  });
+  if (!row) throw httpError(404, 'Product not found');
+  return row;
+}
+
+export async function createProduct(data, tx = prisma) {
+  await assertCategoryExists(data.categoryId, tx);
+  await assertBrandExists(data.brandId, tx);
   try {
-    return await prisma.product.create({ data: toCreateData(data) });
+    return await tx.product.create({ data: toCreateData(data) });
   } catch (err) {
     // A category/brand deleted between check and write surfaces as P2003.
     if (err && err.code === 'P2003') throw httpError(409, 'Product references missing records');
@@ -183,6 +232,14 @@ export async function replaceProductImage(id, { buffer, ext }) {
   });
 }
 
-export default { listProducts, getProductById, createProduct, updateProduct, deleteProduct, replaceProductImage };
+export default {
+  listProducts,
+  getProductById,
+  getProductByBarcode,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  replaceProductImage,
+};
 
 

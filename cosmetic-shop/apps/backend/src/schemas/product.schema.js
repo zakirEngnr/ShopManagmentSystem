@@ -87,5 +87,23 @@ export const productQuerySchema = z
   })
   .strict();
 
-export default { productCreateSchema, productUpdateSchema, productQuerySchema };
+/**
+ * The `:barcode` path parameter of GET /api/products/barcode/:barcode.
+ *
+ * A barcode is at most 40 characters (the same limit the create/update
+ * schemas enforce), so a longer value is rejected as invalid input instead
+ * of being looked up.
+ */
+export const barcodeParamSchema = z
+  .object({
+    barcode: z.string().trim().min(1, { message: 'Required' }).max(40),
+  })
+  .strict();
+
+export default {
+  productCreateSchema,
+  productUpdateSchema,
+  productQuerySchema,
+  barcodeParamSchema,
+};
 

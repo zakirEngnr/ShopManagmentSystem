@@ -111,7 +111,7 @@ test('1 valid cash sale updates stock and returns invoice', async () => {
   const product = await createProduct({ name: 'Cash Product', stock: 5, sku: 'SALE-CASH-1' });
   const res = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 20, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
   });
 
   assert.equal(res.status, 201, JSON.stringify(res.body));
@@ -150,7 +150,7 @@ test('3 discounts reduce total and store exact totals', async () => {
   const product = await createProduct({ name: 'Discount Product', stock: 8, sku: 'SALE-DISC-1' });
   const res = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', discount: 5, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 30, discount: 5, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
   });
 
   assert.equal(res.status, 201);
@@ -165,7 +165,7 @@ test('4 manual items are allowed and unitCost stays null', async () => {
   const beforeSales = await prisma.sale.count();
   const res = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ manualName: 'Custom Gift Set', quantity: 1, unitPrice: 25 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 30, items: [{ manualName: 'Custom Gift Set', quantity: 1, unitPrice: 25 }] },
   });
 
   assert.equal(res.status, 201);
@@ -177,10 +177,10 @@ test('4 manual items are allowed and unitCost stays null', async () => {
 });
 
 test('5 invalid payloads reject malformed sales', async () => {
-  const bad = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', items: [] } });
+  const bad = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', cashReceived: 10, items: [] } });
   const both = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: 999, manualName: 'Bad', quantity: 1, unitPrice: 5 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: 999, manualName: 'Bad', quantity: 1, unitPrice: 5 }] },
   });
   const badPayment = await req('POST', '/api/sales', {
     token: adminToken,
@@ -196,7 +196,7 @@ test('6 missing product returns 404 and no sale row is created', async () => {
   const beforeSales = await prisma.sale.count();
   const res = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: 999999, quantity: 1, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: 999999, quantity: 1, unitPrice: 10 }] },
   });
 
   assert.equal(res.status, 404);
@@ -207,7 +207,7 @@ test('7 insufficient stock blocks the sale', async () => {
   const product = await createProduct({ name: 'Low Stock Product', stock: 2, sku: 'SALE-LOW-1' });
   const res = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 3, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 30, items: [{ productId: product.id, quantity: 3, unitPrice: 10 }] },
   });
 
   assert.equal(res.status, 400);
@@ -221,6 +221,7 @@ test('8 duplicate product lines are preserved and aggregated', async () => {
     token: adminToken,
     body: {
       paymentMethod: 'CASH',
+      cashReceived: 50,
       items: [
         { productId: product.id, quantity: 2, unitPrice: 10 },
         { productId: product.id, quantity: 1, unitPrice: 10 },
@@ -244,6 +245,7 @@ test('9 aggregate stock decrement sums repeated quantities of the same product',
     token: adminToken,
     body: {
       paymentMethod: 'CASH',
+      cashReceived: 60,
       items: [
         { productId: product.id, quantity: 2, unitPrice: 12 },
         { productId: product.id, quantity: 3, unitPrice: 12 },
@@ -265,6 +267,7 @@ test('10 insufficient aggregated stock rejects the entire sale', async () => {
     token: adminToken,
     body: {
       paymentMethod: 'CASH',
+      cashReceived: 40,
       items: [
         { productId: product.id, quantity: 2, unitPrice: 10 },
         { productId: product.id, quantity: 2, unitPrice: 10 },
@@ -285,6 +288,7 @@ test('11 client-supplied unitCost is ignored', async () => {
     token: adminToken,
     body: {
       paymentMethod: 'CASH',
+      cashReceived: 10,
       items: [{ productId: product.id, quantity: 1, unitPrice: 8, unitCost: 999 }],
     },
   });
@@ -294,11 +298,43 @@ test('11 client-supplied unitCost is ignored', async () => {
   assert.notEqual(res.body.saleItems[0].unitCost, 999);
 });
 
+test('12 negotiated unitPrice is stored with the sale item; later sellPrice changes do not alter historical items', async () => {
+  const product = await createProduct({
+    name: 'Negotiated Product',
+    stock: 10,
+    sellPrice: 50,
+    costPrice: 20,
+    sku: 'SALE-NEG-HIST-1',
+  });
+
+  // Owner negotiates a lower price (40) than the product sellPrice (50).
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: {
+      paymentMethod: 'CASH',
+      cashReceived: 80,
+      items: [{ productId: product.id, quantity: 2, unitPrice: 40 }],
+    },
+  });
+
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.saleItems[0].unitPrice, 40, 'negotiated unitPrice must be stored');
+  assert.equal(res.body.saleItems[0].total, 80);
+  assert.equal(res.body.sale.total, 80);
+
+  // Changing the product's sellPrice later must not alter the historical sale item.
+  await prisma.product.update({ where: { id: product.id }, data: { sellPrice: 999 } });
+  const itemAfter = await prisma.saleItem.findFirst({ where: { saleId: res.body.sale.id } });
+  assert.equal(itemAfter.unitPrice, 40, 'historical unitPrice must not change when sellPrice changes');
+  const saleAfter = await prisma.sale.findUnique({ where: { id: res.body.sale.id } });
+  assert.equal(saleAfter.total, 80, 'historical total must not change when sellPrice changes');
+});
+
 test('11 invoice numbering increments by year and creates unique invoice numbers', async () => {
   const p1 = await createProduct({ name: 'Invoice A', stock: 5, sku: 'SALE-INV-1' });
   const p2 = await createProduct({ name: 'Invoice B', stock: 5, sku: 'SALE-INV-2' });
-  const a = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', items: [{ productId: p1.id, quantity: 1, unitPrice: 10 }] } });
-  const b = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', items: [{ productId: p2.id, quantity: 1, unitPrice: 12 }] } });
+  const a = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: p1.id, quantity: 1, unitPrice: 10 }] } });
+  const b = await req('POST', '/api/sales', { token: adminToken, body: { paymentMethod: 'CASH', cashReceived: 12, items: [{ productId: p2.id, quantity: 1, unitPrice: 12 }] } });
 
   assert.equal(a.status, 201);
   assert.equal(b.status, 201);
@@ -315,7 +351,7 @@ test('13 concurrent sales on the same product do not oversell', async () => {
   const requests = Array.from({ length: 4 }, () =>
     req('POST', '/api/sales', {
       token: adminToken,
-      body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
+      body: { paymentMethod: 'CASH', cashReceived: 20, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
     }),
   );
 
@@ -351,6 +387,7 @@ test('15 transaction rollback prevents partial writes and keeps stock unchanged'
     token: adminToken,
     body: {
       paymentMethod: 'CASH',
+      cashReceived: 25,
       items: [
         { productId: okProduct.id, quantity: 2, unitPrice: 10 },
         { productId: 999999, quantity: 1, unitPrice: 15 },
@@ -367,11 +404,11 @@ test('16 lock cleanup after an error allows the next sale to succeed', async () 
   const product = await createProduct({ name: 'Cleanup Product', stock: 3, sku: 'SALE-CLEAN-1' });
   const failed = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 4, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 40, items: [{ productId: product.id, quantity: 4, unitPrice: 10 }] },
   });
   const ok = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 20, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
   });
 
   assert.equal(failed.status, 400);
@@ -385,7 +422,7 @@ test('17 reversed overlapping product locks do not deadlock', async () => {
 
   const first = req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: p1.id, quantity: 1, unitPrice: 8 }, { productId: p2.id, quantity: 1, unitPrice: 9 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 17, items: [{ productId: p1.id, quantity: 1, unitPrice: 8 }, { productId: p2.id, quantity: 1, unitPrice: 9 }] },
   });
   const second = req('POST', '/api/sales', {
     token: adminToken,
@@ -401,7 +438,7 @@ test('17 reversed overlapping product locks do not deadlock', async () => {
 test('18 authentication is required for sales creation', async () => {
   const product = await createProduct({ name: 'Auth Product', stock: 3, sku: 'SALE-AUTH-1' });
   const res = await req('POST', '/api/sales', {
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 1, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: product.id, quantity: 1, unitPrice: 10 }] },
   });
 
   assert.equal(res.status, 401);
@@ -411,11 +448,11 @@ test('19 successful sale after failed transaction still works', async () => {
   const product = await createProduct({ name: 'Recovery Product', stock: 4, sku: 'SALE-REC-1' });
   const failed = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 5, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 50, items: [{ productId: product.id, quantity: 5, unitPrice: 10 }] },
   });
   const ok = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 20, items: [{ productId: product.id, quantity: 2, unitPrice: 10 }] },
   });
 
   assert.equal(failed.status, 400);
@@ -427,11 +464,11 @@ test('20 invalid productId or negative quantity is rejected', async () => {
   const product = await createProduct({ name: 'Negative Product', stock: 3, sku: 'SALE-NEG-1' });
   const zeroQty = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 0, unitPrice: 10 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: product.id, quantity: 0, unitPrice: 10 }] },
   });
   const negativePrice = await req('POST', '/api/sales', {
     token: adminToken,
-    body: { paymentMethod: 'CASH', items: [{ productId: product.id, quantity: 1, unitPrice: -1 }] },
+    body: { paymentMethod: 'CASH', cashReceived: 10, items: [{ productId: product.id, quantity: 1, unitPrice: -1 }] },
   });
 
   assert.equal(zeroQty.status, 400);
@@ -459,6 +496,7 @@ test('21 discount larger than subtotal is capped at subtotal (cash sale, total =
     body: {
       paymentMethod: 'CASH',
       discount: 999,
+      cashReceived: 0,
       items: [{ productId: product.id, quantity: 1, unitPrice: 10 }],
     },
   });
@@ -498,4 +536,69 @@ test('22 KHATA sale whose total would be 0 returns 400 (not 500)', async () => {
   // Verify no sale row was created (compare count before/after)
   const saleCountBefore = await prisma.sale.count();
   assert.equal(await prisma.sale.count(), saleCountBefore, 'no sale row should be created for rejected KHATA sale');
+});
+
+test('23 negotiated lower selling price is accepted and stored as the item unitPrice', async () => {
+  const product = await createProduct({ name: 'Lower Price', stock: 5, sku: 'SALE-LOWER-1', sellPrice: 100 });
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: { paymentMethod: 'CASH', cashReceived: 120, items: [{ productId: product.id, quantity: 2, unitPrice: 60 }] },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.sale.subtotal, 120);
+  assert.equal(res.body.sale.total, 120);
+  assert.equal(res.body.saleItems[0].unitPrice, 60);
+  const items = await prisma.saleItem.findMany({ where: { saleId: res.body.sale.id } });
+  assert.equal(Number(items[0].unitPrice), 60, 'stored unitPrice must reflect the negotiated price');
+});
+
+test('24 negotiated higher selling price is accepted and stored as the item unitPrice', async () => {
+  const product = await createProduct({ name: 'Higher Price', stock: 5, sku: 'SALE-HIGHER-1', sellPrice: 10 });
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: { paymentMethod: 'CASH', cashReceived: 15, items: [{ productId: product.id, quantity: 1, unitPrice: 15 }] },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.saleItems[0].unitPrice, 15);
+});
+
+test('25 zero-price cash sale is allowed and totals to zero', async () => {
+  const product = await createProduct({ name: 'Zero Price', stock: 5, sku: 'SALE-ZERO-2', sellPrice: 10 });
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: { paymentMethod: 'CASH', cashReceived: 0, items: [{ productId: product.id, quantity: 3, unitPrice: 0 }] },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.sale.subtotal, 0);
+  assert.equal(res.body.sale.total, 0);
+  assert.equal(res.body.sale.cashReceived, 0);
+});
+
+test('26 unitPrice with more than 2 decimal places is rejected via the API', async () => {
+  const product = await createProduct({ name: 'Bad Precision', stock: 5, sku: 'SALE-PREC-1' });
+  const saleCountBefore = await prisma.sale.count();
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: { paymentMethod: 'CASH', cashReceived: 10.12, items: [{ productId: product.id, quantity: 1, unitPrice: 10.123 }] },
+  });
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(await prisma.sale.count(), saleCountBefore, 'no sale created for invalid precision');
+});
+
+test('27 historical sale item unitPrice is unchanged when Product.sellPrice changes later', async () => {
+  const product = await createProduct({ name: 'Historical', stock: 5, sku: 'SALE-HIST-1', sellPrice: 10 });
+  const res = await req('POST', '/api/sales', {
+    token: adminToken,
+    body: { paymentMethod: 'CASH', cashReceived: 14, items: [{ productId: product.id, quantity: 2, unitPrice: 7 }] },
+  });
+  assert.equal(res.status, 201);
+  const saleItemId = res.body.saleItems[0].id;
+
+  // Change the product's sellPrice after the sale.
+  await prisma.product.update({ where: { id: product.id }, data: { sellPrice: 999 } });
+
+  const items = await prisma.saleItem.findMany({ where: { saleId: res.body.sale.id } });
+  assert.equal(Number(items[0].unitPrice), 7, 'historical unitPrice must not change when sellPrice changes');
+  const sale = await prisma.sale.findUnique({ where: { id: res.body.sale.id } });
+  assert.equal(Number(sale.total), 14, 'historical sale total must not change when sellPrice changes');
 });

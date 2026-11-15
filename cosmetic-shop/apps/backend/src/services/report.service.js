@@ -134,7 +134,7 @@ async function aggregateCogs(gte, lte) {
 
 async function aggregateExpenses(gte, lte) {
   const agg = await prisma.expense.aggregate({
-    where: { date: { gte, lte } },
+    where: { date: { gte, lte }, deletedAt: null },
     _sum: { amount: true },
   });
   return toMoney(agg._sum.amount ?? 0);
@@ -147,7 +147,7 @@ async function aggregateExpenses(gte, lte) {
 export async function aggregateExpensesByName(gte, lte) {
   const agg = await prisma.expense.groupBy({
     by: ['expenseName'],
-    where: { date: { gte, lte } },
+    where: { date: { gte, lte }, deletedAt: null },
     _sum: { amount: true },
     orderBy: {
       _sum: { amount: 'desc' },

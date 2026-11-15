@@ -11,6 +11,9 @@ import Expenses from './pages/Expenses';
 import Customers from './pages/Customers';
 import CustomerLedger from './pages/CustomerLedger';
 import OutstandingCustomers from './pages/OutstandingCustomers';
+import Suppliers from './pages/Suppliers';
+import Purchases from './pages/Purchases';
+import Settings from './pages/Settings';
 
 const THEME_STORAGE_KEY = 'eshal-theme';
 
@@ -126,7 +129,10 @@ function AppRouter() {
         <Route path="customers" element={<Customers />} />
         <Route path="customers/outstanding" element={<OutstandingCustomers />} />
         <Route path="customers/:id" element={<CustomerLedger />} />
+        <Route path="suppliers" element={<Suppliers />} />
+        <Route path="purchases" element={<Purchases />} />
         <Route path="expenses" element={<Expenses />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="reports" element={<Reports />} />
       </Route>
       <Route path="*" element={<NotFound />} />

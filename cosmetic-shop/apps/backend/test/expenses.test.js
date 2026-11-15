@@ -204,7 +204,9 @@ test('T6 delete', async () => {
   const record = await createExpense({ category: 'MARKETING', description: 'Campaign', amount: 75, date: '2024-05-06T00:00:00.000Z' });
   const res = await req('DELETE', `/api/expenses/${record.id}`, { token: adminToken });
   assert.equal(res.status, 200);
-  assert.equal((await prisma.expense.findUnique({ where: { id: record.id } })), null);
+  const deleted = await prisma.expense.findUnique({ where: { id: record.id } });
+  assert.ok(deleted);
+  assert.ok(deleted.deletedAt);
 
   const again = await req('DELETE', `/api/expenses/${record.id}`, { token: adminToken });
   assert.equal(again.status, 404);
@@ -214,7 +216,7 @@ test('T6 delete', async () => {
 });
 
 test('T7 pagination', async () => {
-  const startingTotal = await prisma.expense.count();
+  const startingTotal = await prisma.expense.count({ where: { deletedAt: null } });
 
   for (let i = 0; i < 25; i += 1) {
     await prisma.expense.create({

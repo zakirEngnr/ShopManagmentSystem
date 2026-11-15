@@ -2,6 +2,7 @@ import { parse } from '../middleware/validate.js';
 import { createPurchaseSchema, purchaseListQuerySchema } from '../schemas/purchase.schema.js';
 import * as purchaseService from '../services/purchase.service.js';
 import { parseId } from '../middleware/validate.js';
+import { extractIdempotencyKey } from '../utils/idempotency.js';
 
 export async function list(req, res, next) {
   try {
@@ -16,7 +17,9 @@ export async function list(req, res, next) {
 export async function create(req, res, next) {
   try {
     const data = parse(createPurchaseSchema, req.body);
-    const purchase = await purchaseService.createPurchase(data);
+    const idempotencyKey = extractIdempotencyKey(req.headers);
+    if (idempotencyKey instanceof Error) throw idempotencyKey;
+    const purchase = await purchaseService.createPurchase(data, idempotencyKey);
     res.status(201).json({ ok: true, purchase });
   } catch (err) {
     next(err);
@@ -26,9 +29,7 @@ export async function create(req, res, next) {
 export async function detail(req, res, next) {
   try {
     const id = parseId(req.params);
-    const result = await purchaseService.listPurchases({ page: 1, limit: 1, supplierId: id });
-    const purchase = result.purchases[0];
-    if (!purchase) throw new Error('Purchase not found');
+    const purchase = await purchaseService.getPurchaseById(id);
     res.json({ ok: true, purchase });
   } catch (err) {
     next(err);

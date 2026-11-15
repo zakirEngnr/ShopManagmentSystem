@@ -18,8 +18,20 @@ import {
   deleteCustomer,
   fetchCustomers,
   recordCustomerDebt,
+  buildCustomerDebtPayload,
   updateCustomer,
 } from '../api/customers';
+import { useMoneyOperation } from '../hooks/useMoneyOperation.js';
+import { useUnresolvedOperations } from '../hooks/useUnresolvedOperations.js';
+import { MONEY_OUTCOME } from '../utils/moneyOperation.js';
+import UnresolvedOperationNotice from '../components/UnresolvedOperationNotice.jsx';
+import UnresolvedOperationsBanner from '../components/UnresolvedOperationsBanner.jsx';
+
+/**
+ * Send a manual debt entry. The body is put on the wire unchanged; the
+ * customer id comes from the entity that is stored with the operation.
+ */
+const sendCustomerDebt = (body, key, entity) => recordCustomerDebt(Number(entity), body, key);
 
 const formatCurrency = (value) => {
   if (value === null || value === undefined || value === '') return 'Rs. 0';
@@ -71,7 +83,7 @@ export default function Customers() {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
-  const [customerTab, setCustomerTab] = useState('retail'); // 'retail' | 'business-personal'
+  const [customerTab, setCustomerTab] = useState('retail'); // 'retail' | 'business' | 'personal'
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimerRef = useRef(null);
   const requestSeqRef = useRef(0);
@@ -94,8 +106,31 @@ export default function Customers() {
   const [recordingDebt, setRecordingDebt] = useState(false);
   const [debtError, setDebtError] = useState(null);
 
+  // The idempotency key AND the payload of the debt entry that is being
+  // recorded. A retry reuses both, so the debt is not increased twice.
+  // The scope contains the customer id, so an unresolved debt entry is also
+  // visible on the customer's ledger page.
+  const debtOperation = useMoneyOperation({
+    scope: `customer-debt:${debtTarget?.id ?? 'none'}`,
+    operation: 'POST /customers/:id/debt',
+    label: 'debt entry',
+    send: sendCustomerDebt,
+  });
+  const debtLocked = debtOperation.locked;
+
+  // The same warning at the page level: an unresolved debt entry must stay
+  // visible even when the dialog is closed.
+  const unresolvedDebts = useUnresolvedOperations({
+    workflow: 'customer-debt',
+    operation: 'POST /customers/:id/debt',
+    label: 'debt entry',
+    send: sendCustomerDebt,
+  });
+
   const tabType = useMemo(() => {
-    return customerTab === 'retail' ? 'RETAIL' : undefined;
+    if (customerTab === 'business') return 'BUSINESS';
+    if (customerTab === 'personal') return 'PERSONAL';
+    return 'RETAIL';
   }, [customerTab]);
 
   const fetchCustomersPage = useCallback(
@@ -109,15 +144,9 @@ export default function Customers() {
         const data = await fetchCustomers({ type: tabType });
         if (requestSeq !== requestSeqRef.current) return;
 
-        const list = Array.isArray(data) ? data : [];
-        let filtered = list;
-        
-        // Filter out RETAIL customers if on Business tab
-        if (customerTab === 'business-personal') {
-          filtered = filtered.filter((c) => c.type !== 'RETAIL');
-        }
-        
-        // Client-side search filter (since backend might not support it)
+        let filtered = Array.isArray(data) ? data : [];
+
+        // Client-side search filter
         if (search && search.trim()) {
           const q = search.trim().toLowerCase();
           filtered = filtered.filter(
@@ -140,7 +169,7 @@ export default function Customers() {
         }
       }
     },
-    [tabType, customerTab]
+    [tabType]
   );
 
   useEffect(() => {
@@ -280,6 +309,9 @@ export default function Customers() {
   };
 
   const closeDebt = () => {
+    // While a debt entry is unresolved it keeps its key and payload, so the
+    // modal is not closed behind the user's back.
+    if (debtLocked) return;
     setDebtOpen(false);
     setDebtTarget(null);
     setDebtForm({ amount: '', description: '' });
@@ -310,28 +342,83 @@ export default function Customers() {
     }
     setDebtErrors({});
     setDebtError(null);
+
+    // The EXACT body that is sent. It is stored with the key, so a replay
+    // sends the very same body and not one rebuilt from the form.
+    const payload = buildCustomerDebtPayload({
+      amount: Number(debtForm.amount),
+      description: debtForm.description,
+    });
+
     setRecordingDebt(true);
 
     try {
-      const result = await recordCustomerDebt(debtTarget.id, {
-        amount: debtForm.amount,
-        description: debtForm.description,
-      });
+      // While a debt entry is unresolved, a DIFFERENT body is refused instead
+      // of sent.
+      const outcome = await debtOperation.submit(payload, debtTarget.id);
+      applyOutcome(outcome);
+    } finally {
       setRecordingDebt(false);
+    }
+  };
+
+  /**
+   * Apply the result of a submission to the screen.
+   *
+   * @param {object} outcome - The result of `debtOperation.submit()` or
+   *   `debtOperation.retry()`.
+   */
+  const applyOutcome = (outcome) => {
+    if (outcome.outcome === MONEY_OUTCOME.SENT) {
+      // The server confirmed the debt entry: the UI is built from the values
+      // the server returned.
+      const transaction = outcome.result?.transaction || {};
+      const customer = outcome.result?.customer || {};
+
       setDebtOpen(false);
       setDebtForm({ amount: '', description: '' });
       setDebtTarget(null);
+      setDebtErrors({});
+      setDebtError(null);
       setSuccessMessage(
-        `Debt of ${formatCurrency(Number(debtForm.amount))} recorded for ${result.customer.name}.`
+        `Debt of ${formatCurrency(transaction.amount)} recorded for ${customer.name || 'the customer'}.`,
       );
       requestSeqRef.current += 1;
       void fetchCustomersPage(searchQuery, false);
-    } catch (err) {
-      setRecordingDebt(false);
-      setDebtError(
-        err.response?.data?.error?.message || 'Failed to record debt entry.'
-      );
+      return;
     }
+
+    // A blocked submission, an ambiguous outcome, a verified failure, a
+    // request that could not be sent safely and a request that is already in
+    // flight all end up here.
+    setDebtError(outcome.message);
+  };
+
+  /** Send the ORIGINAL debt entry again, unchanged. */
+  const handleRetryCustomerDebt = async () => {
+    if (recordingDebt) return;
+    setRecordingDebt(true);
+    setDebtError(null);
+
+    try {
+      const outcome = await debtOperation.retry();
+      applyOutcome(outcome);
+    } finally {
+      setRecordingDebt(false);
+    }
+  };
+
+  /**
+   * Explicitly start something else. The original request may already have
+   * been committed - this does not undo it.
+   */
+  const handleAbandonCustomerDebt = () => {
+    debtOperation.abandon();
+    setDebtOpen(false);
+    setDebtForm({ amount: '', description: '' });
+    setDebtTarget(null);
+    setDebtErrors({});
+    setDebtError(null);
   };
 
   const openCreate = () => {
@@ -422,6 +509,19 @@ export default function Customers() {
         </div>
       )}
 
+      <UnresolvedOperationsBanner
+        label="debt entry"
+        records={unresolvedDebts.records}
+        busy={unresolvedDebts.busy}
+        onRetry={unresolvedDebts.retry}
+        onAbandon={unresolvedDebts.abandon}
+        onOpen={(record) => {
+          const customer = customers.find((entry) => entry.id === Number(record.entity));
+          if (!customer) return;
+          openDebt(customer);
+        }}
+      />
+
       {/* Tabs */}
       <div className="flex gap-2 p-1 bg-[var(--app-panel-2)] rounded-2xl w-fit">
         <button
@@ -437,14 +537,25 @@ export default function Customers() {
         </button>
         <button
           type="button"
-          onClick={() => setCustomerTab('business-personal')}
+          onClick={() => setCustomerTab('business')}
           className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-            customerTab === 'business-personal'
+            customerTab === 'business'
               ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
               : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'
           }`}
         >
-          Business / Personal
+          Business Customers
+        </button>
+        <button
+          type="button"
+          onClick={() => setCustomerTab('personal')}
+          className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
+            customerTab === 'personal'
+              ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
+              : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'
+          }`}
+        >
+          Personal Customers
         </button>
       </div>
 
@@ -678,6 +789,15 @@ export default function Customers() {
               Add an owed amount for <strong>{debtTarget?.name}</strong> without linking it to a product sale.
             </p>
             <form onSubmit={handleDebtSubmit} className="space-y-4">
+              <UnresolvedOperationNotice
+                label="debt entry"
+                unresolved={debtOperation.unresolved}
+                busy={recordingDebt}
+                onRetry={handleRetryCustomerDebt}
+                onAbandon={handleAbandonCustomerDebt}
+              />
+
+              <fieldset disabled={debtLocked} className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-[var(--app-text-soft)] mb-1">Amount Owed (Rs.)</label>
                 <input type="number" min="0" step="0.01" value={debtForm.amount} onChange={(e) => setDebtForm({ ...debtForm, amount: e.target.value })} className="w-full px-4 py-2 bg-[var(--app-panel-2)] border border-[var(--app-border)] rounded-xl text-[var(--app-text)] outline-none focus:border-indigo-500" placeholder="0.00" />
@@ -696,7 +816,8 @@ export default function Customers() {
                   Record Udhaar
                 </button>
               </div>
-            </form>
+                          </fieldset>
+</form>
           </div>
         </div>
       )}

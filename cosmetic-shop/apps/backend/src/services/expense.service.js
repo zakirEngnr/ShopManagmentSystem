@@ -58,6 +58,25 @@ export async function listExpenses(query = {}) {
 
   const where = {};
 
+  // The archive of an expense can be asked for in three ways:
+  //
+  //   includeDeleted is absent (or any value other than the two below)
+  //       -> only the ACTIVE expenses (deletedAt IS NULL)
+  //   includeDeleted === 'true'
+  //       -> the active AND the archived expenses
+  //   includeDeleted === 'only'
+  //       -> only the ARCHIVED expenses (deletedAt IS NOT NULL)
+  //
+  // The cumulative totals are always computed over the rows of the SAME
+  // query, so the totals of the archived view contain the archived expenses
+  // only and the totals of the active view contain the active expenses only.
+  const includeDeleted = String(query.includeDeleted ?? '').trim().toLowerCase();
+  if (includeDeleted === 'only') {
+    where.deletedAt = { not: null };
+  } else if (includeDeleted !== 'true') {
+    where.deletedAt = null;
+  }
+
   if (query.category) {
     const category = String(query.category).trim();
     if (!EXPENSE_CATEGORIES.includes(category)) {
@@ -85,12 +104,12 @@ export async function listExpenses(query = {}) {
     where.date = {};
     if (fromValue) {
       const fromBoundary = new Date(fromValue);
-      fromBoundary.setHours(0, 0, 0, 0);
+      fromBoundary.setUTCHours(0, 0, 0, 0);
       where.date.gte = fromBoundary;
     }
     if (toValue) {
       const toBoundary = new Date(toValue);
-      toBoundary.setHours(23, 59, 59, 999);
+      toBoundary.setUTCHours(23, 59, 59, 999);
       where.date.lte = toBoundary;
     }
   }
@@ -105,8 +124,10 @@ export async function listExpenses(query = {}) {
     }),
   ]);
 
-  // Fetch all matching expenses for the date range (ignoring pagination)
-  // and group them manually in JS to avoid Prisma SQLite bugs and case-sensitivity issues.
+  // The cumulative totals are computed over ALL the rows of the query - the
+  // pagination is ignored - so a row is counted exactly once and never once
+  // per page. The name filter is not applied here, exactly like in the active
+  // view: the panel shows the total of every head of the period.
   const groupWhere = { ...where };
   delete groupWhere.expenseName;
   
@@ -162,6 +183,14 @@ export async function updateExpense(id, data) {
   }
 
   try {
+    // Preserve the previous expense state before applying the update.
+    await prisma.expenseHistory.create({
+      data: {
+        expenseId: id,
+        action: 'UPDATE',
+        snapshot: JSON.stringify(existing),
+      },
+    });
     return await prisma.expense.update({ where: { id }, data: payload });
   } catch (err) {
     mapPrismaError(err, { entity: 'Expense' });
@@ -171,13 +200,51 @@ export async function updateExpense(id, data) {
 export async function deleteExpense(id) {
   const existing = await prisma.expense.findUnique({ where: { id } });
   if (!existing) throw httpError(404, 'Expense not found');
+  if (existing.deletedAt) throw httpError(404, 'Expense not found');
 
   try {
-    await prisma.expense.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.expenseHistory.create({
+        data: {
+          expenseId: id,
+          action: 'DELETE',
+          snapshot: JSON.stringify(existing),
+        },
+      });
+      await tx.expense.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+    });
     return true;
   } catch (err) {
     mapPrismaError(err, { entity: 'Expense' });
   }
 }
 
-export default { createExpense, listExpenses, getExpense, updateExpense, deleteExpense };
+export async function restoreExpense(id) {
+  const existing = await prisma.expense.findUnique({ where: { id } });
+  if (!existing) throw httpError(404, 'Expense not found');
+  if (!existing.deletedAt) return existing;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.expenseHistory.create({
+        data: {
+          expenseId: id,
+          action: 'RESTORE',
+          snapshot: JSON.stringify(existing),
+        },
+      });
+      await tx.expense.update({
+        where: { id },
+        data: { deletedAt: null },
+      });
+    });
+    return prisma.expense.findUnique({ where: { id } });
+  } catch (err) {
+    mapPrismaError(err, { entity: 'Expense' });
+  }
+}
+
+export default { createExpense, listExpenses, getExpense, updateExpense, deleteExpense, restoreExpense };

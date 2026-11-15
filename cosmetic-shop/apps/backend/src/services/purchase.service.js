@@ -1,5 +1,5 @@
 import { prisma } from '../db/prisma.js';
-import { httpError } from '../utils/prismaErrors.js';
+import { httpError, mapPrismaError } from '../utils/prismaErrors.js';
 import { createPurchaseSchema, purchaseListQuerySchema } from '../schemas/purchase.schema.js';
 import { createProduct } from './product.service.js';
 import { add, multiply } from '../utils/money.js';
@@ -70,6 +70,42 @@ export async function listPurchases(query = {}) {
     }
   }
 
+  // Search: purchase ID (exact numeric) OR supplier name (partial contains).
+  // Empty or whitespace-only search behaves exactly like no search.
+  if (parsed.search && parsed.search.trim() !== '') {
+    const searchTerm = parsed.search.trim();
+    const orConditions = [];
+
+    // Purchase ID match: only when the search term is a valid positive safe integer.
+    // Invalid numeric conversions must not create unintended matches.
+    // We verify String(idAsNumber) === searchTerm to reject inputs like "00123"
+    // that would silently become ID 123.
+    const idAsNumber = Number(searchTerm);
+    if (
+      Number.isFinite(idAsNumber) &&
+      idAsNumber > 0 &&
+      Number.isSafeInteger(idAsNumber) &&
+      String(idAsNumber) === searchTerm
+    ) {
+      orConditions.push({ id: idAsNumber });
+    }
+
+    // Supplier name match: partial contains on SQLite.
+    // SQLite's LIKE operator is case-insensitive for ASCII characters (a-z, A-Z)
+    // by default. Prisma generates "Supplier"."name" LIKE '%searchTerm%' for the
+    // contains filter. This is ASCII-only case-insensitive; Unicode characters may
+    // not be case-insensitive depending on SQLite's case_sensitive_like pragma.
+    orConditions.push({
+      supplier: {
+        name: {
+          contains: searchTerm,
+        },
+      },
+    });
+
+    where.OR = orConditions;
+  }
+
   const [total, purchases] = await prisma.$transaction([
     prisma.purchase.count({ where }),
     prisma.purchase.findMany({
@@ -87,7 +123,42 @@ export async function listPurchases(query = {}) {
   return { purchases, total, page, limit };
 }
 
-export async function createPurchase(data) {
+/**
+ * A duplicate purchase was detected inside the transaction.
+ *
+ * Throwing it rolls the transaction back, so every side effect allocated by
+ * the losing request (items, stock increments, supplier balance) is released
+ * again. The original purchase is then read outside the transaction, where
+ * the winner has committed it.
+ */
+class DuplicatePurchaseError extends Error {
+  constructor(idempotencyKey) {
+    super('A purchase with this idempotency key already exists');
+    this.name = 'DuplicatePurchaseError';
+    this.idempotencyKey = idempotencyKey;
+  }
+}
+
+/**
+ * Read a purchase together with its supplier and items, for an idempotent
+ * replay or a detail response.
+ *
+ * @param {object} client - a Prisma transaction client (or the root client).
+ * @param {number} id - the primary key of the purchase.
+ * @returns {Promise<object>} the purchase with relations.
+ * @throws {P2025} when no purchase matches the id.
+ */
+async function readPurchaseWithItems(client, id) {
+  return client.purchase.findUnique({
+    where: { id },
+    include: {
+      supplier: true,
+      items: { include: { product: true }, orderBy: { id: 'asc' } },
+    },
+  });
+}
+
+export async function createPurchase(data, idempotencyKey) {
   const parsed = createPurchaseSchema.parse(data);
   const { supplierId, items } = parsed;
   const productIds = items
@@ -100,6 +171,16 @@ export async function createPurchase(data) {
   const releaseLocks = await acquireProductLocks(productIds);
   try {
     return await prisma.$transaction(async (tx) => {
+      // Idempotency: when a key was supplied, a purchase that already carries
+      // that key is returned unchanged. No second purchase, no second stock
+      // increment, no second supplier balance change and no second item row.
+      if (idempotencyKey) {
+        const existing = await tx.purchase.findUnique({ where: { idempotencyKey } });
+        if (existing) {
+          return readPurchaseWithItems(tx, existing.id);
+        }
+      }
+
       const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
       if (!supplier) {
         throw httpError(404, 'Supplier not found');
@@ -118,9 +199,6 @@ export async function createPurchase(data) {
           }
           if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
             throw httpError(400, 'Invalid quantity');
-          }
-          if (product.stock > 0 && item.quantity >= 5 && item.quantity > product.stock) {
-            throw httpError(400, 'Purchase quantity exceeds current stock');
           }
 
           resolvedItems.push({
@@ -163,14 +241,28 @@ export async function createPurchase(data) {
         throw httpError(400, 'Purchase total is invalid');
       }
 
-      const purchase = await tx.purchase.create({
-        data: {
-          supplierId,
-          totalAmount,
-          paidAmount: 0,
-          status: 'UNPAID',
-        },
-      });
+      let purchase;
+      try {
+        purchase = await tx.purchase.create({
+          data: {
+            supplierId,
+            totalAmount,
+            paidAmount: 0,
+            status: 'UNPAID',
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        });
+      } catch (err) {
+        if (err.code === 'P2002' && idempotencyKey) {
+          // A concurrent request with the same key won the unique-constraint
+          // race. Throwing rolls this transaction back (releasing its stock
+          // increments and supplier balance change) so we can return the
+          // committed purchase instead of creating a duplicate.
+          const existing = await tx.purchase.findUnique({ where: { idempotencyKey } });
+          if (existing) throw new DuplicatePurchaseError(idempotencyKey);
+        }
+        throw err;
+      }
 
       const purchaseItems = resolvedItems.map((item) => ({
         purchaseId: purchase.id,
@@ -208,9 +300,51 @@ export async function createPurchase(data) {
 
       return current;
     });
+  } catch (err) {
+    if (err instanceof DuplicatePurchaseError) {
+      // The winning request has committed the purchase. Return it unchanged.
+      const existing = await prisma.purchase.findUnique({
+        where: { idempotencyKey: err.idempotencyKey },
+        include: {
+          supplier: true,
+          items: { include: { product: true }, orderBy: { id: 'asc' } },
+        },
+      });
+      if (existing) return existing;
+      throw err;
+    }
+    if (err && err.expose) {
+      throw err;
+    }
+    try {
+      mapPrismaError(err, { entity: 'Purchase' });
+    } catch (mapped) {
+      throw mapped;
+    }
+    throw httpError(500, 'Internal server error');
   } finally {
     await releaseLocks();
   }
 }
 
-export default { listPurchases, createPurchase };
+/**
+ * Fetch a single purchase by its primary key, with supplier and items.
+ * Throws P2025 (mapped to 404 "Purchase not found") when missing.
+ *
+ * @param {number} id - the primary key of the purchase.
+ * @returns {Promise<object>} the purchase with supplier and items.
+ */
+export async function getPurchaseById(id) {
+  try {
+    const purchase = await readPurchaseWithItems(prisma, id);
+    if (!purchase) throw httpError(404, 'Purchase not found');
+    return purchase;
+  } catch (err) {
+    if (err?.code === 'P2025') {
+      throw httpError(404, 'Purchase not found');
+    }
+    throw err;
+  }
+}
+
+export default { listPurchases, createPurchase, getPurchaseById };

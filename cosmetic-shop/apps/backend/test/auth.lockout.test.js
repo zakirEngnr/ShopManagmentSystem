@@ -1,22 +1,21 @@
 // Lockout / failed-login concurrency tests for src/services/auth.service.js.
-// Safety: throwaway SQLite file under os.tmpdir() only. Env is set BEFORE any
-// src/ module is imported. Never touches the real DB or .env contents.
+// Safety: throwaway SQLite file inside the designated test database directory
+// (<os.tmpdir()>/cosmetic-shop-backend-tests/) only, validated by the shared
+// guard. Env is set BEFORE any src/ module is imported. Never touches the
+// real DB or .env contents.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { TEST_DB_ROOT, assertIsolatedDatabaseUrl, ensureTestDbRoot } from '../test-support/dbGuard.js';
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-lockout-'));
+ensureTestDbRoot();
+const tmpDir = fs.mkdtempSync(path.join(TEST_DB_ROOT, 'auth-lockout-'));
 const dbFile = path.join(tmpDir, 'test.db');
 
 function abortIfNotTmpDb(url) {
-  const resolved = path.resolve(url.replace(/^file:/, ''));
-  const tmp = path.resolve(os.tmpdir());
-  if (!resolved.startsWith(tmp + path.sep)) {
-    throw new Error('refusing to run: DATABASE_URL is not inside os.tmpdir()');
-  }
+  assertIsolatedDatabaseUrl(url);
 }
 
 const dbUrl = `file:${dbFile}`;

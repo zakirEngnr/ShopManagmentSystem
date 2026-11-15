@@ -90,6 +90,10 @@ export async function deleteCustomer(id) {
       if (txCount > 0) {
         throw httpError(409, 'Customer has ledger transactions and cannot be deleted');
       }
+      const saleCount = await tx.sale.count({ where: { customerId: id } });
+      if (saleCount > 0) {
+        throw httpError(409, 'Customer has sales and cannot be deleted');
+      }
       return await tx.customer.delete({ where: { id } });
     });
   } catch (err) {

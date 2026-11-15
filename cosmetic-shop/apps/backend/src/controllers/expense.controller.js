@@ -52,4 +52,14 @@ export async function remove(req, res, next) {
   }
 }
 
-export default { create, list, get, update, remove };
+export async function restore(req, res, next) {
+  try {
+    const id = parseId(req.params);
+    const expense = await expenseService.restoreExpense(id);
+    res.json({ ok: true, expense });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export default { create, list, get, update, remove, restore };

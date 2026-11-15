@@ -246,7 +246,7 @@ export default function Reports() {
               <span className="font-bold text-[var(--app-text)] font-mono">{formatCurrency(pnl.revenue)}</span>
             </div>
             <div className="flex justify-between items-center text-sm">
-              <span className="text-[var(--app-muted)] font-medium">Discounts</span>
+              <span className="text-[var(--app-muted)] font-medium">Bill Discounts</span>
               <span className="font-bold text-amber-600 font-mono">- {formatCurrency(pnl.discount)}</span>
             </div>
             <div className="flex justify-between items-center py-3 border-y border-[var(--app-border)]">

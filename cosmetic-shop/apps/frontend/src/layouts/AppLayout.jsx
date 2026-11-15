@@ -11,6 +11,8 @@ import {
   Moon,
   Users,
   Wallet,
+  Truck,
+  Settings,
 } from 'lucide-react';
 
 const NAVIGATION = [
@@ -19,7 +21,10 @@ const NAVIGATION = [
   { to: '/products', label: 'Products', icon: Package },
   { to: '/customers', label: 'People / Udhaar', icon: Users },
   { to: '/customers/outstanding', label: 'Outstanding Udhaar', icon: Wallet },
+  { to: '/suppliers', label: 'Suppliers', icon: Truck },
+  { to: '/purchases', label: 'Purchases', icon: ReceiptText },
   { to: '/expenses', label: 'Expenses', icon: ReceiptText },
+  { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
 ];
 
